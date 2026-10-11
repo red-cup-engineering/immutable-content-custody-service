@@ -23,3 +23,14 @@ window(ni, {offset, limit}) returns a fatal-decoded UTF-8 view measured in Unico
 A raw file ni names bytes. A source descriptor names the semantic relation between its admitted locator and those bytes. Neither name establishes a program's semantic contract or authority to read it. AOE derives source references from the receiver's exact readable snapshot, lets agents select them by identity, and rechecks current source and authority before returning a bounded view. Large source bodies are held once, rather than embedded repeatedly in the derivation journal.
 
 `copyOut(ni, destination)` streams the held body to a new file, hashing while it writes. It leaves nothing at `destination` when the body does not match its ni, and it refuses an existing destination. `scripts/custody-file.mjs` is the command line for this carrier: `retain`, `verify` and `get` for a file, and `retain-tree` and `get-tree` for a directory. A tree is held as one deterministic gzip tar (sorted names, zero mtime and owner, no gzip name or time), so the same tree has one address; `get-tree` unpacks it into a directory that does not yet exist. The host names the root on every call. The house's bulk observations are held at `lib/emsenn/services/561-group/services/561-group-services-section/data/state/content-custody`, which Git ignores; a record in the owning section names each payload's ni, size and packaging.
+
+## Native custody command
+
+The package ships `custody-file` from the same native custody source as the
+file-content exports. Every call names the host-owned root and the command's
+required inputs. Importing the command remains inert. `retain-tree` composes
+GNU tar and gzip with argument arrays, checks both producer outcomes, and
+publishes the archive only after both succeed. It does not turn a failed tar
+producer into a retained gzip object or replace an existing target on failure.
+These commands require the native tar/gzip tools; source integration is
+separate from installation and custody of a particular host's files.

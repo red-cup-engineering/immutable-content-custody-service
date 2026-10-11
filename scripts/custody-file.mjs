@@ -12,7 +12,7 @@
  * name or time), so the same tree is one address. Every result is one JSON line on stdout.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, existsSync, openSync, closeSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
 import { parseArgs } from "node:util";
@@ -26,14 +26,28 @@ const TREE_PROFILE = "tar-gnu-sorted-mtime0-owner0-gzip-n";
 /** Archive `directory` deterministically into `target`. */
 export function packTree(directory, target) {
   const parent = dirname(resolve(directory)), name = basename(resolve(directory));
-  const tar = spawnSync("sh", ["-c", `tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu -C "$1" -cf - "$2" | gzip -n -9 > "$3"`, "pack", parent, name, target], { stdio: ["ignore", "inherit", "inherit"] });
-  if (tar.status !== 0) throw new Error("tree packing failed");
+  const destination = resolve(target);
+  const scratch = mkdtempSync(join(dirname(destination), ".custody-pack-"));
+  try {
+    const raw = join(scratch, "tree.tar"), packed = join(scratch, "tree.tgz");
+    const tar = spawnSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "--format=gnu", "-C", parent, "-cf", raw, "--", name], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, LC_ALL: "C" } });
+    if (tar.error || tar.status !== 0) throw new Error("tree packing failed", { cause: tar.error });
+    const descriptor = openSync(packed, "wx");
+    let gzip;
+    try { gzip = spawnSync("gzip", ["-n", "-9", "-c", raw], { stdio: ["ignore", descriptor, "pipe"] }); }
+    finally { closeSync(descriptor); }
+    if (gzip.error || gzip.status !== 0) throw new Error("tree compression failed", { cause: gzip.error });
+    renameSync(packed, destination);
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
 
 export function runCustodyFile(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: { root: { type: "string" }, file: { type: "string" }, dir: { type: "string" }, ni: { type: "string" }, out: { type: "string" }, "media-type": { type: "string" }, "expected-ni": { type: "string" } } });
   if (!values.root) throw new TypeError("--root names the host-owned custody root");
+  const required = { retain: ["file"], "retain-tree": ["dir"], verify: ["ni"], get: ["ni", "out"], "get-tree": ["ni", "out"] };
+  if (!Object.hasOwn(required, command)) throw new TypeError("command is retain, retain-tree, verify, get or get-tree");
+  for (const name of required[command]) if (!values[name]) throw new TypeError(`--${name} is required for ${command}`);
   const custody = createFileContentCustody({ root: resolve(values.root) });
   switch (command) {
     case "retain":
