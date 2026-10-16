@@ -5,12 +5,14 @@
  * answers head, byte-range reads and prefix listing, so custody can serve large
  * media (video, audio) without reading whole files.
  */
-import { closeSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { verifyContentFile } from "./file-content-custody.mjs";
 import { relative, resolve, sep } from "node:path";
 import { walkPosixPathsSync } from "@red-cup-engineering/computer-filepath-engineering-services-section/walk-posix-paths";
-import { writeFileBytesSync } from "@red-cup-engineering/computer-file-engineering-services-section/write-file";
+import { assertDurableFilePathSync, openDurableFileSync, syncFileDurablySync, writeFileBytesSync } from "@red-cup-engineering/computer-file-engineering-services-section/write-file";
 import { extensionType } from "@red-cup-engineering/computer-serialized-content-engineering-services-section/services/http-data-services-section/src/media-type";
+
+import { parseMimeType } from "@red-cup-engineering/computer-serialized-content-engineering-services-section/mime-type";
 
 const missing = (error) => error?.code === "ENOENT";
 
@@ -52,7 +54,7 @@ export function createPathContent(pathOf, mediaTypeOf = extensionType) {
   });
 }
 
-export function createFileStoreSync(root) {
+export function createFileStoreSync(root, { durableRoot } = {}) {
   if (typeof root !== "string" || root.trim() === "") throw new TypeError("a file store needs its root directory named explicitly");
   const base = resolve(root, "objects");
   const pathOf = (key) => {
@@ -66,7 +68,9 @@ export function createFileStoreSync(root) {
   };
   return Object.freeze({
     root: resolve(root),
-    putIfAbsent(key, { body, mediaType = "application/octet-stream" }) {
+    putIfAbsent(key, input) {
+      if (durableRoot !== undefined) return putDurably(pathOf, key, input, durableRoot);
+      const { body, mediaType = "application/octet-stream" } = input;
       const path = pathOf(key), bytes = Buffer.from(body);
       let conflict = false;
       try { writeFileBytesSync(path, bytes, { flag: "wx", mode: 0o600 }); }
@@ -89,6 +93,7 @@ export function createFileStoreSync(root) {
       return Object.freeze({ conflict });
     },
     putCurrent(key, { body, mediaType = "application/octet-stream" }) {
+      if (durableRoot !== undefined) throw custodyError("ERR_CUSTODY_REPLACEMENT_UNSUPPORTED", "strict file custody does not support two-file replacement");
       const path = pathOf(key);
       writeFileBytesSync(path, Buffer.from(body));
       writeFileSync(`${path}.media-type`, `${mediaType}\n`);
@@ -124,8 +129,68 @@ export function createFileStoreSync(root) {
 }
 
 /** Promise-shaped callers share exactly the synchronous byte-store implementation. */
-export function createFileStore(root) {
-  const store = createFileStoreSync(root);
+export function createFileStore(root, options) {
+  const store = createFileStoreSync(root, options);
   return Object.freeze(Object.fromEntries(Object.entries(store).map(([key, value]) =>
     [key, typeof value === "function" ? async (...args) => value(...args) : value])));
+}
+
+
+function custodyError(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+function strictRead(path, durableRoot) {
+  let fd;
+  try { fd = openDurableFileSync(path, constants.O_RDONLY, { durableRoot }); }
+  catch (error) { if (missing(error)) return null; throw error; }
+  try { return readFileSync(fd); } finally { closeSync(fd); }
+}
+
+function sameRepresentation(retained, expected, label) {
+  if (retained === null || !retained.equals(expected))
+    throw custodyError("ERR_CUSTODY_CONFLICT", `strict custody ${label} differs from the expected representation`);
+}
+
+function putDurably(pathOf, key, input, durableRoot) {
+  if (typeof key !== "string" || key.split("/").some(part => !part || part === "." || part === "..") || key.endsWith(".media-type"))
+    throw new TypeError("strict custody requires a canonical object key outside the sidecar namespace");
+  const { body, mediaType = "application/octet-stream" } = input;
+  // The existing MIME owner bounds and parses the value; strict custody admits
+  // only its canonical spelling, and compares the actual sidecar bytes.
+  if (typeof mediaType !== "string" || /[\r\n]/u.test(mediaType) || parseMimeType({ mediaType }).serialized !== mediaType)
+    throw new TypeError("strict custody requires a canonical media type without CR or LF");
+  const bytes = Buffer.from(body), metadata = Buffer.from(mediaType + "\n");
+  const path = pathOf(key), sidecar = path + ".media-type";
+  for (const target of [path, sidecar]) assertDurableFilePathSync(target, { durableRoot });
+  let retained = strictRead(path, durableRoot), heldType = strictRead(sidecar, durableRoot);
+  let conflict = retained !== null;
+  if (retained !== null) sameRepresentation(retained, bytes, "body");
+  if (heldType !== null) sameRepresentation(heldType, metadata, "media type");
+  if (retained !== null && heldType === null && input.mediaType === undefined)
+    throw custodyError("ERR_CUSTODY_MEDIA_TYPE_REQUIRED", "recovering absent metadata requires an explicit mediaType");
+  const publish = (target, expected, label) => {
+    try { writeFileBytesSync(target, expected, { flag: "wx", mode: 0o600, durableRoot }); return false; }
+    catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const current = strictRead(target, durableRoot);
+      if (current === null) throw error; // A foreign temporary is not a destination.
+      sameRepresentation(current, expected, label);
+      return true;
+    }
+  };
+  if (retained === null) conflict = publish(path, bytes, "body");
+  // A racing body publisher may have been interrupted before its sidecar.
+  if (conflict && heldType === null && input.mediaType === undefined) {
+    heldType = strictRead(sidecar, durableRoot);
+    if (heldType === null) throw custodyError("ERR_CUSTODY_MEDIA_TYPE_REQUIRED", "recovering absent metadata requires an explicit mediaType");
+    sameRepresentation(heldType, metadata, "media type");
+  }
+  if (heldType === null) publish(sidecar, metadata, "media type");
+  for (const [target, expected, label] of [[path, bytes, "body"], [sidecar, metadata, "media type"]])
+    sameRepresentation(strictRead(target, durableRoot), expected, label);
+  for (const target of [path, sidecar]) syncFileDurablySync(target, { durableRoot });
+  for (const [target, expected, label] of [[path, bytes, "body"], [sidecar, metadata, "media type"]])
+    sameRepresentation(strictRead(target, durableRoot), expected, label);
+  return Object.freeze({ conflict, durable: true });
 }

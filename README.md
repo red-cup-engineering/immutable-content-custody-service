@@ -53,3 +53,12 @@ A conflict is not proof that the caller's complete representation is held.
 Consumers with a required media type must read back both the exact bytes and
 that media type before acknowledging their own record. `putCurrent` keeps its
 separate replacement contract.
+
+## Strict durable publication
+
+`createFileStoreSync(root, {durableRoot})` and `createFileStore(root, {durableRoot})`
+opt into [the strict file-store contract](specifications/strict-file-store.md).
+Only exact body and canonical media-type custody with both full barriers returns
+`durable: true`, including exact duplicates. Missing sidecar recovery requires an
+explicit type. Strict replacement refuses before mutation; default callers retain
+the existing APIs and behavior. Read observations are not durability receipts.
