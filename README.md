@@ -34,3 +34,22 @@ publishes the archive only after both succeed. It does not turn a failed tar
 producer into a retained gzip object or replace an existing target on failure.
 These commands require the native tar/gzip tools; source integration is
 separate from installation and custody of a particular host's files.
+
+## File-store first-write recovery
+
+`createFileStoreSync(root).putIfAbsent(key, {body, mediaType})` keeps the first
+body under the existing key. A different proposed body returns `{conflict:true}`
+without changing either the retained bytes or their media-type sidecar. An
+already retained matching body also returns `{conflict:true}`.
+
+Body and sidecar publication are separate, atomic exclusive file operations.
+If a process stops after publishing the body, a later call with those exact
+bytes can finish an absent sidecar. A competing sidecar is read back under the
+existing media-type reading semantics and never overwritten. Incompatible
+retained media returns `{conflict:true}`, including when this caller published
+the body but another caller published incompatible metadata first.
+
+A conflict is not proof that the caller's complete representation is held.
+Consumers with a required media type must read back both the exact bytes and
+that media type before acknowledging their own record. `putCurrent` keeps its
+separate replacement contract.

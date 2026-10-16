@@ -67,11 +67,26 @@ export function createFileStoreSync(root) {
   return Object.freeze({
     root: resolve(root),
     putIfAbsent(key, { body, mediaType = "application/octet-stream" }) {
-      const path = pathOf(key);
-      try { writeFileBytesSync(path, Buffer.from(body), { flag: "wx", mode: 0o600 }); }
-      catch (error) { if (error?.code === "EEXIST") return Object.freeze({ conflict: true }); throw error; }
-      writeFileSync(path + ".media-type", mediaType + "\n", { mode: 0o600 });
-      return Object.freeze({ conflict: false });
+      const path = pathOf(key), bytes = Buffer.from(body);
+      let conflict = false;
+      try { writeFileBytesSync(path, bytes, { flag: "wx", mode: 0o600 }); }
+      catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        conflict = true;
+        // A completed body can survive a process loss before its metadata is
+        // published. Only the exact same bytes may finish that publication.
+        // A different body retains the existing first-writer conflict contract.
+        if (!readFileSync(path).equals(bytes)) return Object.freeze({ conflict: true });
+      }
+      const sidecar = path + ".media-type";
+      // Publish the complete sidecar atomically and exclusively too. Concurrent
+      // matching writers may heal the same absent metadata, never replace it.
+      try { writeFileBytesSync(sidecar, Buffer.from(mediaType + "\n"), { flag: "wx", mode: 0o600 }); }
+      catch (error) { if (error?.code !== "EEXIST") throw error; }
+      if (mediaTypeOf(path) !== (String(mediaType).trim() || "application/octet-stream")) {
+        return Object.freeze({ conflict: true });
+      }
+      return Object.freeze({ conflict });
     },
     putCurrent(key, { body, mediaType = "application/octet-stream" }) {
       const path = pathOf(key);
