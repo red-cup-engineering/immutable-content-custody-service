@@ -175,3 +175,33 @@ test("a receiver uses the source-owned canonical tree inspector without publishi
   assert.equal(composed.ni, makeNiUri(raw),
     "canonical source-owned materialization produces exactly the announced Merkle NI");
 });
+
+
+test("one source-owned immutable walk serves raw-content and admitted agent readers", async t => {
+  const { space } = fixture(t);
+  const created = await space.putPath({
+    name: "science/l-space", expected: null, path: ["tilings", "wang"],
+    bytes: Buffer.from("north=blue;east=red"), mediaType: "text/plain",
+  });
+  const traced = await space.tracePath(created.rootNi, ["tilings", "wang"]);
+  assert.deepEqual(traced.path, ["tilings", "wang"]);
+  assert.deepEqual(traced.steps.map(step => step.via), ["tilings", "wang"]);
+  assert.equal(traced.steps[0].from, created.rootNi);
+  assert.equal(traced.steps[1].to, created.ni);
+  assert.equal(traced.ni, created.ni);
+  assert.deepEqual((await space.tracePath(created.rootNi, [])).steps, []);
+  assert.equal(await space.tracePath(created.rootNi, ["tilings", "missing"]), null);
+
+  let reads = 0, grants = 0;
+  await assert.rejects(space.tracePath(created.rootNi, ["tilings", "wang"], {
+    readTree: async ni => { reads++; return space.readTree(ni); },
+    admitChild: ni => { grants++; return ni !== created.ni; },
+  }), /addressed child not admitted/);
+  assert.equal(reads, 2);
+  assert.equal(grants, 2);
+  await assert.rejects(space.tracePath(created.rootNi, ["tilings"], {
+    readTree: () => { throw new RangeError("source reader denied"); },
+  }), /source reader denied/);
+  for (const bad of [[".."], ["UPPER"], ["a/b"], Array(17).fill("a")])
+    await assert.rejects(space.tracePath(created.rootNi, bad), /path/);
+});
