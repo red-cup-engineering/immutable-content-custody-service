@@ -219,10 +219,12 @@ export function createContentAddressedSpace({
   /** The existing single-path contract delegates to the same batch maker. */
   const linkPath = async ({ name, expected, path, ni }) => {
     const result = await linkPaths({ name, expected, links: [{ path, ni }] });
-    const { links: unused, ...published } = result;
-    return Object.freeze({ ...published, path: admittedSinglePath(path), ni });
+    return Object.freeze({
+      name: result.name, before: result.before, rootNi: result.rootNi,
+      path: admitContentTreePath(path), ni,
+      published: result.published, cacheUpdated: result.cacheUpdated,
+    });
   };
-  const admittedSinglePath = path => admitContentTreePath(path);
 
   /**
    * Bounded, deterministic, verified inventory of a held Merkle DAG. Each
