@@ -16,6 +16,7 @@ import { makeNiUri } from "@red-cup-engineering/uri-services-section/ni-uri";
 import { createFileStore } from "./file-store.mjs";
 import { createImmutableContentCustody, immutableContentKey } from "./immutable-content-custody.mjs";
 import { createFileContentReference } from "./file-content-reference.mjs";
+import { CONTENT_TREE_MEDIA_TYPE, encodeContentTree, decodeContentTree } from "./content-tree.mjs";
 
 const NAME_PART = /^[a-z0-9][a-z0-9._-]*$/u;
 const named = value => {
@@ -90,6 +91,30 @@ export function createContentAddressedSpace({
       if (!(bytes instanceof Uint8Array))
         throw new TypeError("content space: retain requires explicit raw bytes");
       return custody.put({ ni: makeNiUri(bytes), bytes, mediaType });
+    },
+    /**
+     * Immutable Merkle directory: an explicitly named, sorted set of links
+     * to already retained bodies. Its own NI names canonical tree bytes.
+     * This does not invent a graph predicate, file mount, or new content ID.
+     */
+    async retainTree(entries) {
+      const bytes = encodeContentTree(entries, immutableContentKey);
+      const tree = decodeContentTree(bytes, immutableContentKey);
+      for (const entry of tree.entries) {
+        if (await custody.head(entry.ni) === null)
+          throw new Error("content space: tree entry refers to unreceived content: " + entry.name);
+      }
+      return custody.put({
+        ni: makeNiUri(bytes), bytes, mediaType: CONTENT_TREE_MEDIA_TYPE,
+      });
+    },
+    /** Read only the exact canonical tree and its explicit child addresses. */
+    async readTree(ni) {
+      const retained = await get(ni);
+      if (retained === null) return null;
+      if (retained.mediaType !== CONTENT_TREE_MEDIA_TYPE)
+        throw new TypeError("content space: requested NI does not name a content tree");
+      return decodeContentTree(retained.bytes, immutableContentKey);
     },
     get,
     head: ni => custody.head(ni),

@@ -148,3 +148,41 @@ test("shared space refuses invalid MIME sidecars without changing ordinary file-
     assert.equal(space.resolve("science/theory"), null);
   }
 });
+
+
+test("immutable Merkle trees compose and persist the same NI bodies across independent consumers", async t => {
+  const { root, space } = fixture(t, ["science/l-space", "engineering/source"]);
+  const wang = await space.retain(Buffer.from("north=blue; south=red"), { mediaType: "text/plain" });
+  const beads = await space.retain(Buffer.from([0, 1, 0, 1]), { mediaType: "application/octet-stream" });
+  const tree = await space.retainTree([
+    { name: "wang-tile", ni: wang.ni },
+    { name: "bead-pattern", ni: beads.ni },
+  ]);
+  assert.equal(tree.durable, true);
+  const treeBytes = (await space.get(tree.ni)).bytes;
+  assert.equal(makeNiUri(treeBytes), tree.ni);
+  const entries = [
+    { name: "bead-pattern", ni: beads.ni },
+    { name: "wang-tile", ni: wang.ni },
+  ];
+  assert.deepEqual((await space.readTree(tree.ni)).entries, entries);
+  assert.equal((await space.retainTree([...entries].reverse())).ni, tree.ni,
+    "input order does not change a canonical tree address");
+  await space.bind({ name: "science/l-space", expected: null, ni: tree.ni });
+  const other = createContentAddressedSpace({ root, durableRoot: root, namespaces: ["science/l-space"] });
+  assert.deepEqual((await other.readTree(other.resolve("science/l-space"))).entries, entries);
+  assert.deepEqual((await other.get(wang.ni)).bytes, Buffer.from("north=blue; south=red"));
+  const parent = await other.retainTree([{ name: "first-region", ni: tree.ni }]);
+  assert.deepEqual((await space.readTree(parent.ni)).entries, [{ name: "first-region", ni: tree.ni }]);
+  assert.equal(await space.readTree(makeNiUri(Buffer.from("absent"))), null);
+  await assert.rejects(() => space.readTree(wang.ni), /does not name a content tree/);
+  await assert.rejects(() => space.retainTree([{ name: "unheld", ni: makeNiUri(Buffer.from("absent")) }]),
+    /unreceived content/);
+  await assert.rejects(() => space.retainTree([{ name: "../forbidden", ni: wang.ni }]),
+    /single-segment/);
+  // Retention requires real bytes; a name can change without rewriting a tree.
+  const next = await space.retainTree([{ name: "beads-only", ni: beads.ni }]);
+  await space.bind({ name: "science/l-space", expected: tree.ni, ni: next.ni });
+  assert.equal(other.resolve("science/l-space"), next.ni);
+  assert.deepEqual((await space.readTree(tree.ni)).entries, entries);
+});

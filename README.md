@@ -147,3 +147,9 @@ actual consumer receiving remain separate effects under the existing 561 Group
 production procedure. The previous `createImmutableContentCustody` API still
 accepts a legacy `putCurrent`-only store for old consumers; durable callers
 use `putIfAbsent`, which now takes precedence when both exist.
+
+## Immutable collection roots (bounded Merkle trees)
+
+The same original `./space` API now supports `retainTree(entries)` and `readTree(ni)` for one canonical, immutable directory of already-retained NI bodies. Entries are explicit `{name, ni}` records, with a unique lowercase single-segment name. The implementation sorts at most 256 slots and stores an exact UTF-8 JSON carrier under its own RFC 6920 NI, with media type `application/vnd.561.content-tree+json`. It does not mint a new hash or a second location index. A reader in another independently constructed space can use the same NI and root to recover the identical tree and its target addresses. Trees can refer to earlier trees to form an immutable Merkle DAG; a target must be retained before an enclosing tree is published.
+
+`retainTree` checks the complete current bytes of every direct target before publishing. `readTree` validates the current tree body, exact media type and canonical representation; it exposes declared links, not an inference that every descendant remains accessible or authorized. A host must still grant read access separately for each content NI; no directory entry confers that access. A tree is **not** an IPFS UnixFS DAG, Git tree, Guix derivation, Plan 9 mount, FluffOS virtual object, SignGraph relation, Wang edge-matching proof, Chu context or glued sheaf section. Those are qualified adapters or interpretations over admitted resources, never properties deduced from matching hashes.
