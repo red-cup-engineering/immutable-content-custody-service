@@ -269,6 +269,39 @@ custody-space tree --config /etc/561/content-space.json \
 custody-space list --config /etc/561/content-space.json
 ```
 
+The `get` command completes the same producer/consumer circuit. It accepts
+**either** `--ni <canonical-ni>` **or** `--name <admitted-name> --path
+'["slot","name"]'`, plus `--out /absolute/new-file`. The output's parent
+must be an existing, non-redirected directory outside the protected shared
+store, and an existing destination is never overwritten. The original File
+Custody `copyOut` operation validates the full NI bytes before atomically
+linking the received output file; the original Shared Space `head` /
+`atPath` reader first requires a complete, canonical media-type sidecar.
+The wire result contains the exact NI, output location, byte length and
+media type rather than raw bytes. The named form also returns the immutable
+root NI and the selected ordered slots so consumers can retain the snapshot
+they actually received.
+
+```sh
+custody-space get --config /etc/561/content-space.json \
+  --name science/l-space --path '["tilings","wang"]' \
+  --out /var/lib/561/received/wang.txt
+```
+
+Callers should prefer this **same host-config-bound `get`** when using
+the shared namespace, instead of introducing a second `--root` selection
+through the older `custody-file` command. Both commands use the same
+original NI object key and physically compatible bytes, but only
+`custody-space get` first checks the shared-space sidecar and installed
+namespace selection. The local host must still supply lawful OS permissions;
+no CLI flag grants access to another office's data or makes it public.
+
+**Executable installation:** the `custody-space` script must ship with
+Git file mode `100755` (the original `custody-file` already does), and
+its command dispatch resolves npm/pnpm bin symlinks before comparing the
+invoking path to its module file. A declared `bin` manifest alone does
+not make a script launchable.
+
 `retain` stores one host-admitted file without a named root. `link`
 composes a previously retained exact `--ni` into a new named tree without
 reading that source file again. `put` stores the input and composes it in

@@ -7,11 +7,12 @@
  * permission, witness or actor authority. This provides the same source-owned
  * Merkle tree/compare-and-publish operations to non-JavaScript programs.
  */
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createContentAddressedSpace } from "../src/content-space.mjs";
+import { createFileContentCustody } from "../src/file-content-custody.mjs";
 
 const DEFAULT_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const OPTIONS = Object.freeze({
@@ -21,12 +22,14 @@ const OPTIONS = Object.freeze({
   path: { type: "string" },
   file: { type: "string" },
   ni: { type: "string" },
+  out: { type: "string" },
   "media-type": { type: "string" },
 });
 const REQUIRED = Object.freeze({
   retain: ["config", "file"],
   put: ["config", "name", "expected", "path", "file"],
   link: ["config", "name", "expected", "path", "ni"],
+  get: ["config", "out"],
   tree: ["config", "ni"],
   at: ["config", "name", "path"],
   resolve: ["config", "name"],
@@ -36,6 +39,7 @@ const PERMITTED = Object.freeze({
   retain: ["file", "media-type"],
   put: ["name", "expected", "path", "file", "media-type"],
   link: ["name", "expected", "path", "ni"],
+  get: ["out", "ni", "name", "path"],
   tree: ["ni"],
   at: ["name", "path"],
   resolve: ["name"],
@@ -100,7 +104,7 @@ const expectation = value => value === "none" ? null : value;
  */
 export async function runCustodySpace(argv) {
   if (!Array.isArray(argv) || argv.length < 1 || !Object.hasOwn(REQUIRED, argv[0]))
-    throw new TypeError("custody-space: expected retain, put, link, tree, at, resolve or list");
+    throw new TypeError("custody-space: expected retain, put, link, get, tree, at, resolve or list");
   const [command, ...args] = argv;
   const { values, positionals } = parseArgs({ args, options: OPTIONS, allowPositionals: true, strict: true });
   if (positionals.length !== 0) throw new TypeError("custody-space: unrecognized positional arguments");
@@ -130,6 +134,43 @@ export async function runCustodySpace(argv) {
         name: values.name, expected: expectation(values.expected),
         path: pathSegments(values.path), ni: values.ni,
       });
+    case "get": {
+      // Exactly one coordinate: either a direct NI or a named Merkle snapshot
+      // slot. Never interpret a URL/file path as a content-addressed name.
+      const direct = values.ni !== undefined;
+      const named = values.name !== undefined && values.path !== undefined;
+      if (direct === named || (direct && (values.name !== undefined || values.path !== undefined)) ||
+          (!direct && !named))
+        throw new TypeError("custody-space get: require either --ni or --name with --path");
+      const target = values.out;
+      if (!isAbsolute(target) || resolve(target) !== target ||
+          realpathSync(dirname(target)) !== dirname(target))
+        throw new TypeError("custody-space get: output requires an absolute path with a real parent");
+      for (const input of [config.root, config.durableRoot]) {
+        const prefix = resolve(input);
+        if (target === prefix || target.startsWith(prefix + sep))
+          throw new TypeError("custody-space get: cannot materialize into shared custody");
+      }
+      const held = direct ? await space.head(values.ni)
+        : await space.atPath(values.name, pathSegments(values.path));
+      if (held === null)
+        throw new RangeError("custody-space get: selected content is not retained");
+      const ni = held.ni;
+      const size = direct ? held.size : held.bytes.byteLength;
+      if (size > budget)
+        throw new RangeError("custody-space get: selected content exceeds installed byte budget");
+      // This original File Custody producer stores bodies at exactly the same
+      // immutableContentKey under root/objects; it hashes the full source
+      // during copy, publishes only after the identity matches, and refuses
+      // to replace an existing target. The shared-space admission above
+      // additionally enforces the complete canonical media-type sidecar.
+      const copied = createFileContentCustody({ root: config.root, maximumBytes: budget })
+        .copyOut(ni, target);
+      return Object.freeze({
+        ...copied, mediaType: held.mediaType,
+        ...(direct ? {} : { name: values.name, rootNi: held.rootNi, path: held.path }),
+      });
+    }
     case "tree": {
       const value = await space.readTree(values.ni);
       return { found: value !== null, rootNi: values.ni,
@@ -149,7 +190,13 @@ export async function runCustodySpace(argv) {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// npm/pnpm install binaries as symlinks. Compare resolved file identities,
+// not argv's symlink spelling; importing this module as a library stays inert.
+const directInvocation = process.argv[1] !== undefined && (() => {
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+})();
+if (directInvocation) {
   try {
     const result = await runCustodySpace(process.argv.slice(2));
     process.stdout.write(JSON.stringify(result) + "\n");

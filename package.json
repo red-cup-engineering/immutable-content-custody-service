@@ -1,6 +1,6 @@
 {
   "name": "@red-cup-engineering/immutable-content-custody-service",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": false,
   "type": "module",
   "description": "Retains and retrieves exact content-addressed bytes through an injected object store.",

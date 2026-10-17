@@ -126,3 +126,125 @@ test("host configuration, local source and explicit tree slots fail closed", asy
   }));
   await assert.rejects(runCustodySpace(args("list")), /only root, durableRoot/);
 });
+
+test("copy-out through the shared host configuration recovers exact NI bytes by direct address and path", async t => {
+  const { tmp, root, source, args } = fixture(t);
+  const created = await runCustodySpace(args("put", {
+    name:"science/l-space", expected:"none", path:'["weave","wang"]',
+    file:source, "media-type":"text/plain",
+  }));
+  const outNi = join(tmp, "received-ni.txt");
+  const byNi = await runCustodySpace(args("get", { ni:created.ni, out:outNi }));
+  assert.equal(byNi.ni, created.ni);
+  assert.equal(byNi.destination, outNi);
+  assert.equal(byNi.mediaType, "text/plain");
+  assert.equal(byNi.byteLength, readFileSync(source).byteLength);
+  assert.deepEqual(readFileSync(outNi), readFileSync(source));
+  assert.equal(JSON.stringify(byNi).includes("north=blue"), false,
+    "the CLI prints metadata, never unbounded source bytes");
+
+  const outName = join(tmp, "received-by-name.txt");
+  const byName = await runCustodySpace(args("get", {
+    name:"science/l-space", path:'["weave","wang"]', out:outName,
+  }));
+  assert.deepEqual(readFileSync(outName), readFileSync(source));
+  assert.deepEqual({
+    name:byName.name, rootNi:byName.rootNi, ni:byName.ni, path:byName.path,
+  }, {
+    name:"science/l-space",rootNi:created.rootNi,ni:created.ni,path:["weave","wang"],
+  });
+  assert.equal(byName.mediaType,"text/plain");
+  const another = createContentAddressedSpace({
+    root, durableRoot:root, namespaces:["science/l-space"],
+  });
+  assert.deepEqual((await another.atPath("science/l-space", ["weave","wang"])).bytes,
+    readFileSync(outName), "another JS reader and a non-JS process receive identical bytes");
+});
+
+test("the actual installed-style CLI creates a reusable file for a second process", t => {
+  const { tmp, source, args } = fixture(t);
+  const put = spawnSync(process.execPath, [cli,...args("put", {
+    name:"science/l-space", expected:"none", path:'["models","beads"]',
+    file:source, "media-type":"text/plain",
+  })], { encoding:"utf8" });
+  assert.equal(put.status,0,put.stderr);
+  const authored = JSON.parse(put.stdout);
+  const out = join(tmp,"other-program.bin");
+  const get = spawnSync(process.execPath, [cli,...args("get", {
+    name:"science/l-space",path:'["models","beads"]',out,
+  })], { encoding:"utf8" });
+  assert.equal(get.status,0,get.stderr);
+  assert.deepEqual(readFileSync(out),readFileSync(source));
+  assert.equal(JSON.parse(get.stdout).ni,authored.ni);
+  assert.equal(get.stderr,"");
+});
+
+test("shared copy-out retains sidecar and writer custody; refuses forged roots and output collisions", async t => {
+  const { tmp, root, config, source, args } = fixture(t);
+  const created = await runCustodySpace(args("put", {
+    name:"science/l-space",expected:"none",path:'["models","beads"]',file:source,
+  }));
+  const output = join(tmp,"does-not-exist.bin");
+  await assert.rejects(runCustodySpace(args("get", { ni:created.rootNi,
+    name:"science/l-space",path:'["models","beads"]',out:output,
+  })), /either --ni or --name with --path/);
+  await assert.rejects(runCustodySpace(args("get", {
+    name:"science/l-space",out:output,
+  })), /either --ni or --name with --path/);
+  await assert.rejects(runCustodySpace(args("get", {
+    ni:created.ni,out:"relative.out",
+  })), /absolute path/);
+  await assert.rejects(runCustodySpace(args("get", {
+    ni:created.ni,out:join(root,"objects","new-file"),
+  })), /cannot materialize into shared custody/);
+  await assert.rejects(runCustodySpace(args("get", {
+    name:"science/l-space",path:'["models","missing"]',out:output,
+  })), /selected content is not retained/);
+  assert.equal(readFileSync(source).length>0,true);
+  await assert.rejects(runCustodySpace(args("get", {
+    ni:"ni:///sha-256;WRONG",out:output,
+  })));
+  assert.throws(()=>readFileSync(output),{code:"ENOENT"},"refusals leave no output");
+
+  writeFileSync(output,"protected-original");
+  await assert.rejects(runCustodySpace(args("get",{
+    ni:created.ni,out:output,
+  })),/EEXIST|exist|original/);
+  assert.equal(readFileSync(output,"utf8"),"protected-original",
+    "copy-out never replaces an existing downstream artifact");
+
+  const metadata = join(root,"objects",...created.retained.key.split("/"))+".media-type";
+  rmSync(metadata);
+  const pending = join(tmp,"sidecar-must-not-bypass.bin");
+  await assert.rejects(runCustodySpace(args("get",{ni:created.ni,out:pending})),
+    { code:"ERR_CUSTODY_INCOMPLETE" });
+  assert.throws(()=>readFileSync(pending),{code:"ENOENT"});
+  writeFileSync(config, JSON.stringify({
+    root,durableRoot:root,namespaces:["science/l-space"],maximumBytes:1,
+  }));
+  // Restore media type before checking the original bounded-read effect.
+  writeFileSync(metadata,"application/octet-stream\n");
+  const overBudget = join(tmp,"too-big.bin");
+  await assert.rejects(runCustodySpace(args("get",{ni:created.ni,out:overBudget})),
+    /exceeds installed byte budget/);
+  assert.throws(()=>readFileSync(overBudget),{code:"ENOENT"});
+});
+
+test("installed npm-style bin symlink actually enters the CLI and retrieves original bytes", t => {
+  const { tmp, source, args } = fixture(t);
+  const alias = join(tmp,"custody-space-installed");
+  symlinkSync(cli,alias);
+  const put = spawnSync(alias,args("put",{
+    name:"science/l-space",expected:"none",path:'["craft","bead"]',
+    file:source,"media-type":"text/plain",
+  }),{encoding:"utf8"});
+  assert.equal(put.status,0,put.error?.message ?? put.stderr);
+  const receipt = JSON.parse(put.stdout);
+  const destination = join(tmp,"external-reader.bin");
+  const get = spawnSync(alias,args("get",{
+    name:"science/l-space",path:'["craft","bead"]',out:destination,
+  }),{encoding:"utf8"});
+  assert.equal(get.status,0,get.error?.message ?? get.stderr);
+  assert.equal(JSON.parse(get.stdout).ni,receipt.ni);
+  assert.deepEqual(readFileSync(destination),readFileSync(source));
+});
