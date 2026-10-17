@@ -54,3 +54,50 @@ test("maximumBytes is explicit while the historical 8 MiB default remains intact
   assert.equal((await custody.put({ ni, bytes })).byteLength, bytes.length);
   assert.throws(() => createImmutableContentCustody({ store: memoryStore(), maximumBytes: 0 }), /positive safe integer/u);
 });
+
+
+test("first-write custody composes with the original strict file-store shape", async () => {
+  const retained = new Map();
+  let currentWrites = 0, firstWrites = 0;
+  const store = {
+    async get(key) { return retained.get(key) ?? null; },
+    async putIfAbsent(key, { body, mediaType }) {
+      firstWrites += 1;
+      if (retained.has(key)) {
+        const existing = retained.get(key);
+        if (!existing.body.equals(body) || existing.mediaType !== mediaType)
+          throw Object.assign(new Error("retained representation differs"), { code: "ERR_CUSTODY_CONFLICT" });
+        return { conflict: true, durable: true };
+      }
+      retained.set(key, { body: Buffer.from(body), mediaType });
+      return { conflict: false, durable: true };
+    },
+    async putCurrent() { currentWrites++; throw new Error("mutable fallback must not be called"); },
+  };
+  const custody = createImmutableContentCustody({ store });
+  const empty = Buffer.alloc(0), id = makeNiUri(empty);
+  const first = await custody.put({ ni: id, bytes: empty });
+  assert.equal(first.byteLength, 0, "empty Git blobs are legitimate source bytes");
+  assert.equal(first.durable, true);
+  const replay = await custody.put({ ni: id, bytes: Buffer.alloc(0) });
+  assert.equal(replay.ni, first.ni);
+  assert.equal(firstWrites, 2);
+  assert.equal(currentWrites, 0);
+  assert.deepEqual((await custody.get(id)).bytes, empty);
+  await assert.rejects(() => custody.put({ ni: id, bytes: empty, mediaType: "text/plain" }),
+    { code: "ERR_CUSTODY_CONFLICT" });
+  assert.equal((await custody.get(id)).mediaType, "application/octet-stream");
+  assert.equal(currentWrites, 0);
+  await assert.rejects(() => custody.put({ ni: id }), /explicit bytes/);
+});
+
+test("an occupied first-write key must contain both the requested bytes and declared media", async () => {
+  const bytes = Buffer.from("same");
+  const ni = makeNiUri(bytes);
+  const custody = createImmutableContentCustody({ store: {
+    async get() { return { body: bytes, mediaType: "text/plain" }; },
+    async putIfAbsent() { return { conflict: true }; },
+  } });
+  await assert.rejects(() => custody.put({ ni, bytes, mediaType: "application/json" }),
+    /different media type/);
+});

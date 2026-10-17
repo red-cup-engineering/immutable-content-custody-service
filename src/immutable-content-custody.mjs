@@ -11,8 +11,9 @@ const PROFILE = "org.red-cup-engineering.immutable-content-reference.v1";
 const digest = (bytes, encoding) => createHash("sha256").update(bytes).digest(encoding);
 
 function requiredStore(store) {
-  if (!store || typeof store.get !== "function" || typeof store.putCurrent !== "function") {
-    throw new TypeError("immutable content custody requires a store with get and putCurrent operations");
+  if (!store || typeof store.get !== "function" ||
+      (typeof store.putIfAbsent !== "function" && typeof store.putCurrent !== "function")) {
+    throw new TypeError("immutable content custody requires a store with get and putIfAbsent or putCurrent operations");
   }
   return store;
 }
@@ -23,10 +24,13 @@ function maximumBytes(value) {
 }
 
 function exactBytes(value, limit) {
-  const bytes = Buffer.from(value ?? []);
-  if (bytes.length === 0 || bytes.length > limit) {
-    throw new RangeError(`immutable content must contain 1 through ${limit} bytes`);
-  }
+  if (value === undefined || value === null)
+    throw new TypeError("immutable content custody requires explicit bytes (including empty bytes)");
+  const bytes = Buffer.from(value);
+  // Empty source files are genuine content objects, including Git's empty
+  // blobs. A missing input is not an empty content source.
+  if (bytes.length > limit)
+    throw new RangeError(`immutable content must contain 0 through ${limit} bytes`);
   return bytes;
 }
 
@@ -89,22 +93,31 @@ export function createImmutableContentCustody({ store, maximumBytes: offeredMaxi
     const bytes = exactBytes(source, limit);
     const key = immutableContentKey(ni);
     verify(ni, bytes);
-    await objects.putCurrent(key, {
+    // One NI always names the same raw bytes. Prefer the original first-write
+    // owner when it exists: putCurrent would replace sidecar metadata and is
+    // deliberately refused by strict durable file stores. Repeated matching
+    // writers reconcile by reading the actual retained body and media type.
+    const publication = {
       body: bytes,
       byteLength: bytes.length,
       sha256: digest(bytes, "hex"),
       mediaType,
-    });
+    };
+    const receiving = typeof objects.putIfAbsent === "function"
+      ? await objects.putIfAbsent(key, publication)
+      : await objects.putCurrent(key, publication);
     const retained = await get(ni);
-    if (!retained || !retained.bytes.equals(bytes)) {
+    if (!retained || !retained.bytes.equals(bytes))
       throw new Error("content custody read-back failed");
-    }
+    if (retained.mediaType !== mediaType)
+      throw new Error("immutable content custody retained a different media type; use typed presentation evidence");
     return Object.freeze({
       profile: PROFILE,
       ni,
       key,
       byteLength: bytes.length,
-      mediaType: retained.mediaType ?? mediaType,
+      mediaType,
+      ...(receiving?.durable === true ? { durable: true } : {}),
     });
   }
 

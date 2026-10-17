@@ -62,3 +62,80 @@ Only exact body and canonical media-type custody with both full barriers returns
 `durable: true`, including exact duplicates. Missing sidecar recovery requires an
 explicit type. Strict replacement refuses before mutation; default callers retain
 the existing APIs and behavior. Read observations are not durability receipts.
+
+
+## Shared content-addressed space: byte identity and named frontiers
+
+`./space` now composes this **original** NI custody producer, the strict
+physical File Engineering writer and the existing immutable-reference chain
+as one host-installed library. This is the reusable binary foundation for
+code, datasets, designs, images, scientific carriers and package materials.
+
+```js
+import { createContentAddressedSpace } from "@red-cup-engineering/immutable-content-custody-service/space";
+
+const space = createContentAddressedSpace({
+  // Installed and authorized by the host, never a request parameter.
+  root: "/srv/561/shared-content",
+  durableRoot: "/srv/561/shared-content",
+  namespaces: ["science/l-space", "engineering/source", "operations/receiving"],
+});
+const retained = await space.retain(new Uint8Array([0, 255, 1]), {
+  mediaType: "application/octet-stream",
+});
+await space.bind({ name: "engineering/source", expected: null, ni: retained.ni });
+const bytes = (await space.at("engineering/source")).bytes;
+```
+
+**No new identity format:** The original URI owner mints the RFC 6920 SHA-256
+`ni:///sha-256;…`. The original immutable custody owner derives
+`immutable/sha-256/<first-two-digest-characters>/<digest>`; File Engineering
+owns first-write publication, recovery and full ancestry fsync. A duplicate
+with the same bytes and canonical media type is idempotent. Empty files have
+a real NI. Conflicting media is refused instead of overwriting a first-writer
+sidecar. Multiple code packages with the same declared root can receive the
+same bytes independently, without retrieving them from one another's source
+checkout. A named root is a **mutable relation** to those immutable bytes,
+with a compare-and-publish transition history. It is not another byte identity.
+
+The host establishes the directory and its outside ancestry as durable,
+non-symlink, authorized and stable before calling. The space validates the
+physical root and uses the original strict writer; it does not itself issue
+filesystem credentials, mount a 9P namespace, expose a network endpoint,
+install a Guix generation, or decide who may read a given blob or bind a name.
+Names are an explicit host-admitted finite set; an HTTP route must not forward
+untrusted names or path strings to this library. Binding a name to an NI that
+is not already actually retained refuses. Content reads independently verify
+the complete current NI-addressed body. A corrupted or missing referenced body
+never silently becomes an unknown reading.
+
+### Typed external coordinates and consumers
+
+- **IPFS** CIDs, UnixFS DAG layout, and CAR exchange are foreign serialization
+  and transport *adapters*. A raw-block CID can be mapped to NI after checking
+  the actual bytes; a multi-block UnixFS root does not name the same raw bytes
+  as its file merely because they describe one user-facing file.
+- **Git** commits/blobs and refs remain Git-native histories; Git's OID is not
+  converted by text substitution. A source-observation adapter must retain
+  the Git object bytes or the reconstructed raw file bytes and then bind the
+  verified resulting NI with an attributed witness.
+- **Guix** `/gnu/store` paths and derivations are installed/build reference
+  coordinates. This space does not override the Guix daemon or claim that a
+  byte-identical artifact implies an equivalent build graph.
+- **Plan 9** bind/mount and **FluffOS** virtual objects motivate separate
+  per-actor namespace and object-loading projections. Their authentication,
+  lifecycle, method calls and capabilities belong to qualified host adapters,
+  not to mutable blob-store metadata.
+- **CAIRN**, SignCell/SignChain/SignGraph/SignCraft and L-Space consume original
+  NI bytes and typed relations from this common custody substrate. No document
+  directory is the topology. WIT/ACK/ATT, FOUR, Chu and sheaf readings require
+  separate admitted claims and restrictions, never guessed from coincident
+  paths, matching bytes, or timestamps.
+
+This delivers the **local shared immutable substrate and named-root operation**,
+not automatic federation or a presently installed public L-Space. Registry
+publication, host binding, source-root admission, remote byte transport and
+actual consumer receiving remain separate effects under the existing 561 Group
+production procedure. The previous `createImmutableContentCustody` API still
+accepts a legacy `putCurrent`-only store for old consumers; durable callers
+use `putIfAbsent`, which now takes precedence when both exist.

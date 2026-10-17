@@ -11,7 +11,7 @@ const parse=path=>{try{return JSON.parse(readFileSync(path,'utf8'));}catch(error
  * An exclusive immutable transition is the commit point. The current-reference file
  * is a disposable acceleration of that chain: a stale or missing cache cannot erase
  * a successful publication. There is no process lock or abandoned lock to reclaim. */
-export function createFileContentReference(path,{transitions=path+'.transitions'}={}){
+export function createFileContentReference(path,{transitions=path+'.transitions',durableRoot}={}){
  if(typeof path!=='string'||!path)throw new TypeError('a content reference needs its host-owned path');
  const stepPath=id=>join(transitions,(id===null?'empty':immutableContentKey(id).split('/').at(-1))+'.json');
  function read(){
@@ -31,15 +31,15 @@ export function createFileContentReference(path,{transitions=path+'.transitions'
   if(expected===next){
    // Refreshing the disposable cache also makes completed admission renames durable.
    // A null reference marks empty custody without inventing a world.
-   writeFileTextSync(path,JSON.stringify({kind:KIND,content:next})+'\n',{mode:0o600});
+   writeFileTextSync(path,JSON.stringify({kind:KIND,content:next})+'\n',{mode:0o600,...(durableRoot===undefined?{}:{durableRoot})});
    return Object.freeze({published:false,cacheUpdated:true});
   }
-  try{writeFileTextSync(stepPath(expected),JSON.stringify({kind:KIND,previous:expected,content:next})+'\n',{flag:'wx',mode:0o600});}
+  try{writeFileTextSync(stepPath(expected),JSON.stringify({kind:KIND,previous:expected,content:next})+'\n',{flag:'wx',mode:0o600,...(durableRoot===undefined?{}:{durableRoot})});}
   catch(error){if(error?.code==='EEXIST')throw new TypeError('Persisted content reference changed before publication');throw error;}
   // Publication is already durable. A failed cache write leaves the same committed
   // result reachable from the prior reference and must not turn it into a refusal.
   let cacheUpdated=true;
-  try{writeFileTextSync(path,JSON.stringify({kind:KIND,content:next})+'\n',{mode:0o600});}catch{cacheUpdated=false;}
+  try{writeFileTextSync(path,JSON.stringify({kind:KIND,content:next})+'\n',{mode:0o600,...(durableRoot===undefined?{}:{durableRoot})});}catch{cacheUpdated=false;}
   return Object.freeze({published:true,cacheUpdated});
  }
  return Object.freeze({read,publish});
