@@ -155,6 +155,29 @@ The same original `./space` API now supports `retainTree(entries)` and `readTree
 `retainTree` checks the complete current bytes of every direct target before publishing. `readTree` validates the current tree body, exact media type and canonical representation; it exposes declared links, not an inference that every descendant remains accessible or authorized. A host must still grant read access separately for each content NI; no directory entry confers that access. A tree is **not** an IPFS UnixFS DAG, Git tree, Guix derivation, Plan 9 mount, FluffOS virtual object, SignGraph relation, Wang edge-matching proof, Chu context or glued sheaf section. Those are qualified adapters or interpretations over admitted resources, never properties deduced from matching hashes.
 
 
+## Canonical Merkle-byte admission for independent receiving hosts
+
+`createContentAddressedSpace(...).inspectTreeBytes(bytes)` is the **original
+custody-owner** canonical parser for an externally received immutable tree.
+It returns the bounded, validated, frozen typed tree (`kind`, `version`,
+`entries`) but **does not publish bytes or dereference children**. The same
+`decodeContentTree` and NI admission rules already used by `readTree`
+are applied: exact UTF-8 JSON, canonical ordering, unique lowercase slots,
+no extra object fields, and valid RFC 6920 NI child links.
+
+The Networking service's existing `ni-peer` may use this on a bounded,
+NI-verified HTTP response *before* deciding which descendants to request.
+After independently authorizing and retaining those child bytes, it must
+call the original `retainTree(entries)` to publish a canonical local tree
+and compare the resulting NI with the advertised root. No HTTP content
+type, arbitrary filename, foreign CID, or remote source authorization
+is promoted into a local data or namespace grant. A denied child must not
+turn into a fabricated absent or automatically linked resource.
+
+This is the pure admission facet of the same local immutable space API,
+not a rival codec or implicit peer transport. Source changes do not
+establish publication of version `0.5.2` or installed network exchange.
+
 ## Merkle path authorship over named roots
 
 The host-admitted `./space` surface can now **make and update** a tree of

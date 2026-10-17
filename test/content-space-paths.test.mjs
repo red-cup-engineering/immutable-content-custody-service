@@ -140,3 +140,38 @@ test("a referenced but now-incomplete physical tree refuses traversal, not silen
   assert.equal(space.resolve("science/l-space"), result.rootNi,
     "corrupt storage must not rewrite the referenced immutable root");
 });
+
+
+test("a receiver uses the source-owned canonical tree inspector without publishing unreceived parent bytes", async t => {
+  const { space } = fixture(t);
+  const leaf = Buffer.from("tile north=blue", "utf8");
+  const ni = makeNiUri(leaf);
+  const raw = Buffer.from(JSON.stringify({
+    kind: "semiotic-content.content-tree", version: 1,
+    entries: [{ name: "wang", ni }],
+  }) + "\n");
+  const original = space.inspectTreeBytes(raw);
+  assert.equal(original.kind, "semiotic-content.content-tree");
+  assert.deepEqual(original.entries, [{ name: "wang", ni }]);
+  assert.equal(Object.isFrozen(original.entries), true);
+  assert.equal(await space.get(makeNiUri(raw)), null,
+    "a raw advertised tree cannot become a retained root just by being inspected");
+  assert.equal(await space.get(ni), null);
+
+  for (const candidate of [
+    Buffer.from(raw.toString("utf8").trim()),
+    Buffer.from(raw.toString("utf8") + "\n"),
+    Buffer.from(JSON.stringify({ ...JSON.parse(raw), extra: "unadmitted" }) + "\n"),
+    Buffer.from("{bad json}\n"),
+    Buffer.from(JSON.stringify({ kind: "semiotic-content.content-tree", version: 1,
+      entries: [{ name: "../parent", ni }] }) + "\n"),
+  ]) {
+    assert.throws(() => space.inspectTreeBytes(candidate), /content tree/);
+  }
+  assert.equal(await space.get(makeNiUri(raw)), null,
+    "malformed remote metadata cannot create a Merkle tree");
+  await space.retain(leaf);
+  const composed = await space.retainTree(original.entries);
+  assert.equal(composed.ni, makeNiUri(raw),
+    "canonical source-owned materialization produces exactly the announced Merkle NI");
+});

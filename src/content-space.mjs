@@ -193,6 +193,10 @@ export function createContentAddressedSpace({
      */
     retainTree,
     readTree,
+    /** Canonical typed-tree admission by its original store owner, BEFORE
+     * any peer fetch follows child links or any named root is published.
+     * No bytes are retained by inspecting an externally received carrier. */
+    inspectTreeBytes: bytes => decodeContentTree(bytes, immutableContentKey),
     atPath,
     linkPath,
     putPath,
