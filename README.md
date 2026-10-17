@@ -132,6 +132,14 @@ never silently becomes an unknown reading.
   separate admitted claims and restrictions, never guessed from coincident
   paths, matching bytes, or timestamps.
 
+Shared-space reads now require a **complete canonical media-type sidecar**, not
+just a hash-valid body left by an interrupted two-file write. The original
+low-level file-store's best-effort observations are unchanged; only the shared
+space opts into `ERR_CUSTODY_INCOMPLETE` for body-only or malformed sidecars.
+Recover an interrupted publication with the original exact bytes and explicit
+media type through `retain`, which reestablishes physical durability barriers.
+A successful read is still not an independently witnessed installation.
+
 This delivers the **local shared immutable substrate and named-root operation**,
 not automatic federation or a presently installed public L-Space. Registry
 publication, host binding, source-root admission, remote byte transport and

@@ -111,3 +111,40 @@ test("retained content corruption and competing media cannot be mistaken for agr
     /do not match|content bytes/u);
   assert.equal(space.resolve("code/source"), null);
 });
+
+test("interrupted body-only custody is not a named or readable shared object until repaired", async t => {
+  const { root, space } = fixture(t);
+  const bytes = Buffer.from("recover the admitted representation");
+  const { ni } = await space.retain(bytes, { mediaType: "text/plain" });
+  const path = join(root, "objects", ...immutableContentKey(ni).split("/"));
+  rmSync(path + ".media-type"); // simulate a lost publication sidecar
+  for (const read of [
+    () => space.get(ni),
+    () => space.head(ni),
+    () => space.range(ni, { start: 0, end: 2 }),
+    () => space.bind({ name: "code/source", expected: null, ni }),
+  ]) await assert.rejects(read, { code: "ERR_CUSTODY_INCOMPLETE" });
+  assert.equal(space.resolve("code/source"), null, "refusal cannot publish a name");
+  const repaired = await space.retain(bytes, { mediaType: "text/plain" });
+  assert.equal(repaired.ni, ni);
+  assert.equal(repaired.durable, true, "the original strict publisher reestablished barriers");
+  assert.equal((await space.bind({ name: "code/source", expected: null, ni })).published, true);
+  assert.deepEqual((await space.at("code/source")).bytes, bytes);
+});
+
+test("shared space refuses invalid MIME sidecars without changing ordinary file-store observations", async t => {
+  const { root, space } = fixture(t);
+  const { ni } = await space.retain(Buffer.from("held"), { mediaType: "text/plain" });
+  const path = join(root, "objects", ...immutableContentKey(ni).split("/")) + ".media-type";
+  for (const metadata of [
+    Buffer.alloc(0), Buffer.from("Text/Plain\n"), Buffer.from("text/plain"),
+    Buffer.from("text/plain\nextra\n"), Buffer.from("text/plain\r\n"),
+    Buffer.from([0xff, 0x0a]),
+  ]) {
+    writeFileSync(path, metadata);
+    await assert.rejects(() => space.get(ni), { code: "ERR_CUSTODY_INCOMPLETE" });
+    await assert.rejects(() => space.bind({ name: "science/theory", expected: null, ni }),
+      { code: "ERR_CUSTODY_INCOMPLETE" });
+    assert.equal(space.resolve("science/theory"), null);
+  }
+});

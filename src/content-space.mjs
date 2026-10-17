@@ -59,7 +59,7 @@ export function createContentAddressedSpace({
     holders.set(name, createFileContentReference(path, { durableRoot: anchor }));
   }
   const custody = createImmutableContentCustody({
-    store: createFileStore(located, { durableRoot: anchor }),
+    store: createFileStore(located, { durableRoot: anchor, requireCompleteRepresentation: true }),
     ...(maximumBytes === undefined ? {} : { maximumBytes }),
   });
   const holder = name => {

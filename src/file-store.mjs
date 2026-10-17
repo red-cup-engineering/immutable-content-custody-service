@@ -54,7 +54,9 @@ export function createPathContent(pathOf, mediaTypeOf = extensionType) {
   });
 }
 
-export function createFileStoreSync(root, { durableRoot } = {}) {
+export function createFileStoreSync(root, { durableRoot, requireCompleteRepresentation = false } = {}) {
+  if (requireCompleteRepresentation && durableRoot === undefined)
+    throw new TypeError("complete representation reading requires strict durable custody");
   if (typeof root !== "string" || root.trim() === "") throw new TypeError("a file store needs its root directory named explicitly");
   const base = resolve(root, "objects");
   const pathOf = (key) => {
@@ -64,7 +66,28 @@ export function createFileStoreSync(root, { durableRoot } = {}) {
     return path;
   };
   const mediaTypeOf = (path) => {
-    try { return readFileSync(`${path}.media-type`, "utf8").trim() || "application/octet-stream"; } catch (error) { if (missing(error)) return "application/octet-stream"; throw error; }
+    // Default stores keep their existing best-effort reads. The shared NI
+    // space instead refuses incomplete publication of its two-file record.
+    if (requireCompleteRepresentation) {
+      const metadata = strictRead(`${path}.media-type`, durableRoot);
+      if (metadata === null || metadata.length < 2 || metadata.length > 4097)
+        throw custodyError("ERR_CUSTODY_INCOMPLETE", "content space: incomplete media-type representation");
+      let text;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(metadata); }
+      catch { throw custodyError("ERR_CUSTODY_INCOMPLETE", "content space: invalid media-type encoding"); }
+      if (!text.endsWith("\n") || text.includes("\r") || text.slice(0, -1).includes("\n"))
+        throw custodyError("ERR_CUSTODY_INCOMPLETE", "content space: noncanonical media-type sidecar");
+      const mediaType = text.slice(0, -1);
+      try {
+        if (parseMimeType({ mediaType }).serialized !== mediaType)
+          throw new TypeError("noncanonical");
+      } catch {
+        throw custodyError("ERR_CUSTODY_INCOMPLETE", "content space: noncanonical media-type sidecar");
+      }
+      return mediaType;
+    }
+    try { return readFileSync(`${path}.media-type`, "utf8").trim() || "application/octet-stream"; }
+    catch (error) { if (missing(error)) return "application/octet-stream"; throw error; }
   };
   return Object.freeze({
     root: resolve(root),

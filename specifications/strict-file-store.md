@@ -54,6 +54,13 @@ mutation. A two-file replacement has no atomic representation boundary here.
 The default replacement API remains unchanged. Raw get/head/read/verify/list are
 observations, not strict durable-publication receipts; they retain their existing
 behavior and must not be used to infer successful completion after an error.
+The higher-level shared content-addressed space opts into
+`requireCompleteRepresentation` when constructing this store. In that mode,
+observation refuses an absent, malformed, or noncanonical UTF-8 media-type
+sidecar with `ERR_CUSTODY_INCOMPLETE`, rather than converting incomplete
+publication into a nameable content object. This mode is read-only and does not
+itself certify durability; the existing strict `putIfAbsent` publication and
+barriers remain the sole receipt-generating operation.
 
 ## Acceptance
 
