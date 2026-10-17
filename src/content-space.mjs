@@ -151,30 +151,124 @@ export function createContentAddressedSpace({
    * Concurrent writers using the same expected root cannot silently merge
    * different histories: one succeeds and the other must retry explicitly.
    */
-  const linkPath = async ({ name, expected, path, ni }) => {
+  /**
+   * One CAS publication for several already-retained Merkle paths. Unlike
+   * repeated linkPath calls this cannot expose a partially authored collection.
+   * The original tree encoder and immutable frontier remain the only writers.
+   */
+  const linkPaths = async ({ name, expected, links }) => {
     const reference = holder(name);
-    const slots = admitContentTreePath(path);
     if (expected !== null) immutableContentKey(expected);
-    immutableContentKey(ni);
+    if (!Array.isArray(links) || links.length < 1 || links.length > 128)
+      throw new TypeError("content space: linkPaths requires 1 through 128 links");
     if (reference.read() !== expected)
       throw new TypeError("Persisted content reference changed before publication");
-    if (await custody.head(ni) === null)
-      throw new Error("content space: cannot link unreceived content");
 
-    const replace = async (parentNi, depth) => {
-      const tree = parentNi === null ? { entries: [] } : await readTree(parentNi);
-      if (tree === null) throw new Error("content space: path parent is unavailable");
-      const slot = slots[depth];
-      const previous = tree.entries.find(entry => entry.name === slot);
-      const childNi = depth === slots.length - 1
-        ? ni : await replace(previous?.ni ?? null, depth + 1);
-      const entries = [...tree.entries.filter(entry => entry.name !== slot), { name: slot, ni: childNi }];
-      return (await retainTree(entries)).ni;
+    const patch = { children: new Map() };
+    const admitted = [];
+    for (const link of links) {
+      if (link === null || typeof link !== "object" || Array.isArray(link) ||
+          Reflect.ownKeys(link).length !== 2 ||
+          !Object.hasOwn(link, "path") || !Object.hasOwn(link, "ni"))
+        throw new TypeError("content space: each link requires exactly path and ni");
+      const pathField = Object.getOwnPropertyDescriptor(link, "path");
+      const niField = Object.getOwnPropertyDescriptor(link, "ni");
+      if (!Object.hasOwn(pathField, "value") || !Object.hasOwn(niField, "value"))
+        throw new TypeError("content space: link fields must be own data values");
+      const path = admitContentTreePath(pathField.value);
+      const ni = niField.value;
+      immutableContentKey(ni);
+      let node = patch;
+      for (const part of path) {
+        if (node.ni !== undefined)
+          throw new TypeError("content space: a link cannot contain another link path");
+        if (!node.children.has(part)) node.children.set(part, { children: new Map() });
+        node = node.children.get(part);
+      }
+      if (node.ni !== undefined || node.children.size !== 0)
+        throw new TypeError("content space: duplicate or overlapping link paths");
+      node.ni = ni;
+      admitted.push(Object.freeze({ path, ni }));
+    }
+
+    // No immutable ancestor or mutable frontier may be written until every
+    // caller-provided target has actually been admitted to this host.
+    for (const { ni } of admitted)
+      if (await custody.head(ni) === null)
+        throw new Error("content space: cannot link unreceived content");
+
+    const materialize = async (priorNi, node) => {
+      const prior = priorNi === null ? { entries: [] } : await readTree(priorNi);
+      if (prior === null) throw new Error("content space: path parent is unavailable");
+      const entries = new Map(prior.entries.map(entry => [entry.name, entry.ni]));
+      for (const [slot, child] of node.children) {
+        const next = child.ni === undefined
+          ? await materialize(entries.get(slot) ?? null, child)
+          : child.ni;
+        entries.set(slot, next);
+      }
+      return (await retainTree([...entries].map(([slot, ni]) => ({ name: slot, ni })))).ni;
     };
-
-    const rootNi = await replace(expected, 0);
+    const rootNi = await materialize(expected, patch);
     const published = reference.publish(expected, rootNi);
-    return Object.freeze({ name, before: expected, rootNi, ni, path: slots, ...published });
+    return Object.freeze({
+      name, before: expected, rootNi, links: Object.freeze(admitted), ...published,
+    });
+  };
+
+  /** The existing single-path contract delegates to the same batch maker. */
+  const linkPath = async ({ name, expected, path, ni }) => {
+    const result = await linkPaths({ name, expected, links: [{ path, ni }] });
+    const { links: unused, ...published } = result;
+    return Object.freeze({ ...published, path: admittedSinglePath(path), ni });
+  };
+  const admittedSinglePath = path => admitContentTreePath(path);
+
+  /**
+   * Bounded, deterministic, verified inventory of a held Merkle DAG. Each
+   * occurrence has its OWN path even when two paths reference the same NI.
+   * This is custody structure, not a semantic graph, Chu pairing or license.
+   * Host readers must independently admit the root and each child.
+   */
+  const walkTree = async (rootNi, {
+    maximumNodes = 256, maximumDepth = 16, admitChild,
+  } = {}) => {
+    immutableContentKey(rootNi);
+    if (!Number.isSafeInteger(maximumNodes) || maximumNodes < 1 || maximumNodes > 2048 ||
+        !Number.isSafeInteger(maximumDepth) || maximumDepth < 0 || maximumDepth > 16 ||
+        (admitChild !== undefined && typeof admitChild !== "function"))
+      throw new TypeError("content space: bounded walk budgets and optional admission required");
+    const records = [];
+    const active = new Set();
+    const visit = async (ni, path) => {
+      if (records.length >= maximumNodes)
+        throw new RangeError("content space: tree walk exceeds node budget");
+      const metadata = await custody.head(ni);
+      if (metadata === null)
+        throw new Error("content space: tree walk refers to unavailable content");
+      const treeKind = metadata.mediaType === CONTENT_TREE_MEDIA_TYPE;
+      records.push(Object.freeze({
+        path: Object.freeze([...path]), ni,
+        kind: treeKind ? "tree" : "object",
+        mediaType: metadata.mediaType, byteLength: metadata.size,
+      }));
+      if (!treeKind) return;
+      if (active.has(ni)) throw new TypeError("content space: cyclic content tree");
+      active.add(ni);
+      const tree = await readTree(ni);
+      if (path.length >= maximumDepth && tree.entries.length !== 0)
+        throw new RangeError("content space: tree walk exceeds depth budget");
+      for (const entry of tree.entries) {
+        const childPath = Object.freeze([...path, entry.name]);
+        if (admitChild !== undefined &&
+            await admitChild(entry.ni, { parentNi: ni, path: childPath }) !== true)
+          throw new RangeError("content space: addressed child not admitted");
+        await visit(entry.ni, childPath);
+      }
+      active.delete(ni);
+    };
+    await visit(rootNi, []);
+    return Object.freeze({ rootNi, nodes: Object.freeze(records), count: records.length });
   };
 
   /**
@@ -218,6 +312,8 @@ export function createContentAddressedSpace({
     inspectTreeBytes: bytes => decodeContentTree(bytes, immutableContentKey),
     atPath,
     tracePath,
+    walkTree,
+    linkPaths,
     linkPath,
     putPath,
     get,
