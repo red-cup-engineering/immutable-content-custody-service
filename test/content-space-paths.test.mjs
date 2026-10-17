@@ -205,3 +205,124 @@ test("one source-owned immutable walk serves raw-content and admitted agent read
   for (const bad of [[".."], ["UPPER"], ["a/b"], Array(17).fill("a")])
     await assert.rejects(space.tracePath(created.rootNi, bad), /path/);
 });
+
+
+test("atomic Wang and ported-bead fabrication creates one coherent root consumed from a second configuration", async t => {
+  const { root, space } = fixture(t);
+  // Exact bytes are admitted; their different mathematical laws are NOT inferred by this store.
+  const wangBytes = Buffer.from(JSON.stringify({
+    kind: "wang-tile", north: "blue", east: "red", south: "blue", west: "red",
+  }));
+  const beadBytes = Buffer.from(JSON.stringify({
+    kind: "ported-bead", bead: "a", hole: ["minus", "plus"], threadWalk: ["minus", "plus"],
+  }));
+  const wang = await space.retain(wangBytes, { mediaType: "application/json" });
+  const bead = await space.retain(beadBytes, { mediaType: "application/json" });
+  const original = await space.linkPaths({
+    name: "science/l-space", expected: null,
+    links: [
+      { path: ["tilings", "wang"], ni: wang.ni },
+      { path: ["beadwork", "ported"], ni: bead.ni },
+    ],
+  });
+  assert.equal(original.published, true);
+  assert.equal(original.links.length, 2);
+  assert.equal(space.resolve("science/l-space"), original.rootNi);
+  const other = createContentAddressedSpace({
+    root, durableRoot: root, namespaces: ["science/l-space"],
+  });
+  assert.deepEqual((await other.atPath("science/l-space", ["tilings", "wang"])).bytes, wangBytes);
+  assert.deepEqual((await other.atPath("science/l-space", ["beadwork", "ported"])).bytes, beadBytes);
+  const inventory = await other.walkTree(original.rootNi);
+  assert.equal(inventory.count, 5);
+  assert.deepEqual(inventory.nodes.map(node => node.path.join("/")), [
+    "", "beadwork", "beadwork/ported", "tilings", "tilings/wang",
+  ]);
+  assert.equal(inventory.nodes[2].ni, bead.ni);
+  assert.equal(inventory.nodes[4].ni, wang.ni);
+  assert.equal(inventory.nodes[0].kind, "tree");
+  assert.equal(inventory.nodes[4].kind, "object");
+  assert.equal(inventory.nodes[4].byteLength, wangBytes.byteLength);
+  assert.equal(JSON.stringify(inventory).includes("north"), false,
+    "metadata never silently publishes the retained source body");
+});
+
+test("multi-link update preserves unrelated source, repeated NI appearances, and prior immutable snapshots", async t => {
+  const { root, space } = fixture(t);
+  const retained = await space.retain(Buffer.from("same source, two locations"));
+  const first = await space.linkPath({
+    name: "engineering/source", expected: null, path: ["provenance", "original"], ni: retained.ni,
+  });
+  const updated = await space.linkPaths({
+    name: "engineering/source", expected: first.rootNi,
+    links: [
+      { path: ["science", "source"], ni: retained.ni },
+      { path: ["applications", "source"], ni: retained.ni },
+    ],
+  });
+  assert.equal(updated.published, true);
+  assert.notEqual(updated.rootNi, first.rootNi);
+  assert.deepEqual((await space.atPath("engineering/source", ["provenance", "original"])).bytes,
+    Buffer.from("same source, two locations"));
+  assert.deepEqual((await space.readTree(first.rootNi)).entries.map(x => x.name), ["provenance"]);
+  const another = createContentAddressedSpace({ root, durableRoot: root, namespaces: ["engineering/source"] });
+  const inventory = await another.walkTree(updated.rootNi);
+  assert.deepEqual(inventory.nodes.filter(x => x.kind === "object").map(x => x.ni),
+    [retained.ni, retained.ni, retained.ni],
+    "a repeated child has three distinct path occurrences, not three fake identities");
+});
+
+test("batch construction refuses overlaps, unreceived targets, and stale writers before publishing", async t => {
+  const { space } = fixture(t);
+  const existing = await space.retain(Buffer.from("held"));
+  const missing = makeNiUri(Buffer.from("not retained"));
+  const attempt = links => space.linkPaths({
+    name: "science/l-space", expected: null, links,
+  });
+  for (const links of [
+    [],
+    [{ path: ["a"], ni: existing.ni }, { path: ["a"], ni: existing.ni }],
+    [{ path: ["a"], ni: existing.ni }, { path: ["a", "b"], ni: existing.ni }],
+    [{ path: ["a", "b"], ni: existing.ni }, { path: ["a"], ni: existing.ni }],
+    [{ path: ["not-owned"], ni: missing }],
+    [{ path: ["bad/slot"], ni: existing.ni }],
+    [{ path: ["x"], ni: existing.ni, grant: true }],
+  ]) await assert.rejects(() => attempt(links));
+  assert.equal(space.resolve("science/l-space"), null, "no incomplete name was announced");
+  const accepted = await attempt([{ path: ["ok"], ni: existing.ni }]);
+  await assert.rejects(() => space.linkPaths({
+    name: "science/l-space", expected: null, links: [{ path: ["late"], ni: existing.ni }],
+  }), /changed before publication/);
+  assert.equal(space.resolve("science/l-space"), accepted.rootNi);
+  assert.equal(await space.atPath("science/l-space", ["late"]), null);
+});
+
+test("recursive NI inventory refuses unauthorised children, runaway size/depth, and missing objects", async t => {
+  const { root, space } = fixture(t);
+  const held = await space.retain(Buffer.from("private child"));
+  const rootEntry = await space.linkPath({
+    name: "science/l-space", expected: null, path: ["a", "b"], ni: held.ni,
+  });
+  await assert.rejects(space.walkTree(rootEntry.rootNi, {
+    admitChild: ni => ni !== held.ni,
+  }), /addressed child not admitted/);
+  await assert.rejects(space.walkTree(rootEntry.rootNi, { maximumNodes: 2 }),
+    /exceeds node budget/);
+  await assert.rejects(space.walkTree(rootEntry.rootNi, { maximumDepth: 0 }),
+    /exceeds depth budget/);
+  await assert.rejects(space.walkTree(rootEntry.rootNi, { maximumDepth: 1 }),
+    /exceeds depth budget/);
+  await assert.rejects(space.walkTree(rootEntry.rootNi, { maximumNodes: 2049 }),
+    /bounded walk budgets/);
+  const names = [];
+  const good = await space.walkTree(rootEntry.rootNi, {
+    admitChild: (ni, context) => { names.push(context.path.join("/")); return true; },
+  });
+  assert.equal(good.count, 3);
+  assert.deepEqual(names, ["a", "a/b"]);
+  assert.equal(space.resolve("science/l-space"), rootEntry.rootNi);
+  // An interrupted sidecar cannot be concealed by a listing.
+  const broken = join(root, "objects", ...immutableContentKey(held.ni).split("/")) + ".media-type";
+  unlinkSync(broken);
+  await assert.rejects(space.walkTree(rootEntry.rootNi), { code: "ERR_CUSTODY_INCOMPLETE" });
+});
