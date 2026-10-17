@@ -16,7 +16,7 @@ import { makeNiUri } from "@red-cup-engineering/uri-services-section/ni-uri";
 import { createFileStore } from "./file-store.mjs";
 import { createImmutableContentCustody, immutableContentKey } from "./immutable-content-custody.mjs";
 import { createFileContentReference } from "./file-content-reference.mjs";
-import { CONTENT_TREE_MEDIA_TYPE, encodeContentTree, decodeContentTree } from "./content-tree.mjs";
+import { CONTENT_TREE_MEDIA_TYPE, encodeContentTree, decodeContentTree, admitContentTreePath } from "./content-tree.mjs";
 
 const NAME_PART = /^[a-z0-9][a-z0-9._-]*$/u;
 const named = value => {
@@ -83,6 +83,100 @@ export function createContentAddressedSpace({
     if (retained === null) throw new Error("content space: a named root refers to unavailable bytes");
     return retained;
   };
+
+  /** Retain a canonical tree only after its immediate target bytes are held. */
+  const retainTree = async entries => {
+    const bytes = encodeContentTree(entries, immutableContentKey);
+    const tree = decodeContentTree(bytes, immutableContentKey);
+    for (const entry of tree.entries) {
+      if (await custody.head(entry.ni) === null)
+        throw new Error("content space: tree entry refers to unreceived content: " + entry.name);
+    }
+    return custody.put({ ni: makeNiUri(bytes), bytes, mediaType: CONTENT_TREE_MEDIA_TYPE });
+  };
+
+  const readTree = async ni => {
+    const retained = await get(ni);
+    if (retained === null) return null;
+    if (retained.mediaType !== CONTENT_TREE_MEDIA_TYPE)
+      throw new TypeError("content space: requested NI does not name a content tree");
+    return decodeContentTree(retained.bytes, immutableContentKey);
+  };
+
+  /**
+   * Read an immutable snapshot through an admitted name and explicit tree
+   * slots. Return the root NI too: a concurrent rebinding cannot turn an old
+   * snapshot into a claim about the new frontier.
+   */
+  const atPath = async (name, path) => {
+    const reference = holder(name);
+    const slots = admitContentTreePath(path);
+    const rootNi = reference.read();
+    if (rootNi === null) return null;
+    let currentNi = rootNi;
+    for (const slot of slots) {
+      const tree = await readTree(currentNi);
+      if (tree === null) throw new Error("content space: path parent is unavailable");
+      const child = tree.entries.find(entry => entry.name === slot);
+      if (child === undefined) return null;
+      currentNi = child.ni;
+    }
+    const retained = await get(currentNi);
+    if (retained === null) throw new Error("content space: path target is unavailable");
+    return Object.freeze({ ...retained, rootNi, path: slots });
+  };
+
+  /**
+   * Compose immutable Merkle ancestors around an already-retained target.
+   * The ONLY mutable step is the existing compare-and-publish frontier.
+   * Concurrent writers using the same expected root cannot silently merge
+   * different histories: one succeeds and the other must retry explicitly.
+   */
+  const linkPath = async ({ name, expected, path, ni }) => {
+    const reference = holder(name);
+    const slots = admitContentTreePath(path);
+    if (expected !== null) immutableContentKey(expected);
+    immutableContentKey(ni);
+    if (reference.read() !== expected)
+      throw new TypeError("Persisted content reference changed before publication");
+    if (await custody.head(ni) === null)
+      throw new Error("content space: cannot link unreceived content");
+
+    const replace = async (parentNi, depth) => {
+      const tree = parentNi === null ? { entries: [] } : await readTree(parentNi);
+      if (tree === null) throw new Error("content space: path parent is unavailable");
+      const slot = slots[depth];
+      const previous = tree.entries.find(entry => entry.name === slot);
+      const childNi = depth === slots.length - 1
+        ? ni : await replace(previous?.ni ?? null, depth + 1);
+      const entries = [...tree.entries.filter(entry => entry.name !== slot), { name: slot, ni: childNi }];
+      return (await retainTree(entries)).ni;
+    };
+
+    const rootNi = await replace(expected, 0);
+    const published = reference.publish(expected, rootNi);
+    return Object.freeze({ name, before: expected, rootNi, ni, path: slots, ...published });
+  };
+
+  /**
+   * One hosted authoring operation: retain exact bytes, materialize immutable
+   * ancestors, then move the admitted name with an expected-root CAS.
+   * A losing writer may leave valid unreferenced immutable bytes; it cannot
+   * overwrite a winning frontier or publish an incomplete tree.
+   */
+  const putPath = async ({ name, expected, path, bytes, mediaType = "application/octet-stream" }) => {
+    const reference = holder(name);
+    const slots = admitContentTreePath(path);
+    if (expected !== null) immutableContentKey(expected);
+    if (reference.read() !== expected)
+      throw new TypeError("Persisted content reference changed before publication");
+    if (!(bytes instanceof Uint8Array))
+      throw new TypeError("content space: putPath requires explicit raw bytes");
+    const retained = await custody.put({ ni: makeNiUri(bytes), bytes, mediaType });
+    const published = await linkPath({ name, expected, path: slots, ni: retained.ni });
+    return Object.freeze({ ...published, retained });
+  };
+
   return Object.freeze({
     kind: "semiotic-content.addressed-space.v1",
     namespaces: Object.freeze([...holders.keys()]),
@@ -97,25 +191,11 @@ export function createContentAddressedSpace({
      * to already retained bodies. Its own NI names canonical tree bytes.
      * This does not invent a graph predicate, file mount, or new content ID.
      */
-    async retainTree(entries) {
-      const bytes = encodeContentTree(entries, immutableContentKey);
-      const tree = decodeContentTree(bytes, immutableContentKey);
-      for (const entry of tree.entries) {
-        if (await custody.head(entry.ni) === null)
-          throw new Error("content space: tree entry refers to unreceived content: " + entry.name);
-      }
-      return custody.put({
-        ni: makeNiUri(bytes), bytes, mediaType: CONTENT_TREE_MEDIA_TYPE,
-      });
-    },
-    /** Read only the exact canonical tree and its explicit child addresses. */
-    async readTree(ni) {
-      const retained = await get(ni);
-      if (retained === null) return null;
-      if (retained.mediaType !== CONTENT_TREE_MEDIA_TYPE)
-        throw new TypeError("content space: requested NI does not name a content tree");
-      return decodeContentTree(retained.bytes, immutableContentKey);
-    },
+    retainTree,
+    readTree,
+    atPath,
+    linkPath,
+    putPath,
     get,
     head: ni => custody.head(ni),
     range: (ni, range) => custody.read(ni, range),

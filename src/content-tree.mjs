@@ -13,6 +13,23 @@ export const CONTENT_TREE_KIND = "semiotic-content.content-tree";
 export const CONTENT_TREE_VERSION = 1;
 const NAME = /^[a-z0-9][a-z0-9._-]*$/u;
 const MAX_ENTRIES = 256;
+const MAX_PATH_DEPTH = 16;
+
+/**
+ * Admit a path through immutable Merkle trees, not a filesystem or URL path.
+ * Exactly the same single-segment grammar as tree entries is used on every leg.
+ * Requiring an explicit segment array prevents silent slash/percent decoding
+ * and bounds recursive materialization independently of the host namespace.
+ */
+export function admitContentTreePath(path) {
+  if (!Array.isArray(path) || path.length < 1 || path.length > MAX_PATH_DEPTH)
+    throw new TypeError("content tree path must contain 1 through 16 explicit segments");
+  for (const part of path) {
+    if (typeof part !== "string" || part.length > 128 || !NAME.test(part))
+      throw new TypeError("content tree path contains a noncanonical single-segment name");
+  }
+  return Object.freeze([...path]);
+}
 
 /** Encode one bounded canonical tree. admitAddress is the original NI validator. */
 export function encodeContentTree(entries, admitAddress) {

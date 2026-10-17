@@ -153,3 +153,64 @@ use `putIfAbsent`, which now takes precedence when both exist.
 The same original `./space` API now supports `retainTree(entries)` and `readTree(ni)` for one canonical, immutable directory of already-retained NI bodies. Entries are explicit `{name, ni}` records, with a unique lowercase single-segment name. The implementation sorts at most 256 slots and stores an exact UTF-8 JSON carrier under its own RFC 6920 NI, with media type `application/vnd.561.content-tree+json`. It does not mint a new hash or a second location index. A reader in another independently constructed space can use the same NI and root to recover the identical tree and its target addresses. Trees can refer to earlier trees to form an immutable Merkle DAG; a target must be retained before an enclosing tree is published.
 
 `retainTree` checks the complete current bytes of every direct target before publishing. `readTree` validates the current tree body, exact media type and canonical representation; it exposes declared links, not an inference that every descendant remains accessible or authorized. A host must still grant read access separately for each content NI; no directory entry confers that access. A tree is **not** an IPFS UnixFS DAG, Git tree, Guix derivation, Plan 9 mount, FluffOS virtual object, SignGraph relation, Wang edge-matching proof, Chu context or glued sheaf section. Those are qualified adapters or interpretations over admitted resources, never properties deduced from matching hashes.
+
+
+## Merkle path authorship over named roots
+
+The host-admitted `./space` surface can now **make and update** a tree of
+immutable content objects without inventing another identity format or routing
+writes through an application-owned database. Each path is an explicit array
+of lowercase single-segment slot names, with a bounded depth of 16. It is not
+a disk, URL or arbitrary Plan 9 path, and cannot be decoded as one.
+
+```js
+import { createContentAddressedSpace } from
+  "@red-cup-engineering/immutable-content-custody-service/space";
+
+const space = createContentAddressedSpace({
+  root: "/srv/561/shared-content",
+  durableRoot: "/srv/561/shared-content",
+  namespaces: ["science/l-space", "engineering/source"],
+});
+const wang = await space.putPath({
+  name: "science/l-space",
+  expected: null,
+  path: ["tilings", "wang"],
+  bytes: new TextEncoder().encode("north=blue;east=red"),
+  mediaType: "text/plain",
+});
+const earlierRoot = wang.rootNi;
+const beads = await space.putPath({
+  name: "science/l-space",
+  expected: earlierRoot,
+  path: ["tilings", "beads"],
+  bytes: new Uint8Array([1, 0, 1, 0]),
+});
+const reading = await space.atPath("science/l-space", ["tilings", "wang"]);
+console.log(reading.ni, reading.rootNi, beads.rootNi);
+```
+
+`putPath` retains the caller's exact bytes using the existing strict NI writer,
+retains the changed enclosing trees with their own NI identifiers, and performs
+one compare-and-publish of the named root. `linkPath` performs the same
+composition for a previously retained `ni`, without another byte upload.
+`atPath` traverses the current admitted root and returns both the exact
+target and the root NI of the snapshot read. `retainTree` and `readTree`
+remain available for explicit immutable collections.
+
+A stale `expected` root refuses a competing publication; unrelated immutable
+objects constructed by the losing writer may remain, but the winning named
+root cannot be overwritten. Intermediate path slots must already be trees or
+be absent; navigating *through* an ordinary byte object refuses instead of
+silently promoting it to a directory. Existing child slots of reconstructed
+trees persist unchanged. Each direct reference must name already retained
+bytes. The existing storage boundary continues to verify complete bytes and
+canonical media-type sidecars. Neither a path nor the possession of an NI
+grants a reader authority: hosts must admit names and access separately.
+
+This is a **local host-installed authoring primitive**, not an IPFS network,
+Plan 9/9P mount, Git object adapter, Guix build realization, FluffOS loader,
+VaultMaze scene, or published TUFTE projection. Consumers must explicitly
+receive the newly installed package and bind their own lawful host roots.
+A tree proves the immutable links it *declares*, not a Wang-edge
+compatibility, a bead-weaving law, a Chu adjunction or sheaf gluing theorem.
