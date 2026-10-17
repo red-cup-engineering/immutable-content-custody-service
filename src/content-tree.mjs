@@ -22,18 +22,27 @@ export function encodeContentTree(entries, admitAddress) {
     throw new TypeError("content tree requires at most " + MAX_ENTRIES + " explicit entries");
   const seen = new Set();
   const ordered = entries.map(entry => {
+    // An immutable tree is a commitment to exact admitted data fields, not
+    // whatever an accessor happens to return at different observation times.
     if (entry === null || typeof entry !== "object" || Array.isArray(entry) ||
-        Object.keys(entry).length !== 2 || !Object.hasOwn(entry, "name") ||
-        !Object.hasOwn(entry, "ni"))
+        Reflect.ownKeys(entry).length !== 2 ||
+        !Object.hasOwn(entry, "name") || !Object.hasOwn(entry, "ni"))
       throw new TypeError("content tree entries have exactly name and ni fields");
-    if (typeof entry.name !== "string" || entry.name.length > 128 || !NAME.test(entry.name))
+    const nameField = Object.getOwnPropertyDescriptor(entry, "name");
+    const niField = Object.getOwnPropertyDescriptor(entry, "ni");
+    if (!nameField?.enumerable || !niField?.enumerable ||
+        !Object.hasOwn(nameField, "value") || !Object.hasOwn(niField, "value"))
+      throw new TypeError("content tree entries require plain own data fields");
+    const { value: name } = nameField;
+    const { value: ni } = niField;
+    if (typeof name !== "string" || name.length > 128 || !NAME.test(name))
       throw new TypeError("content tree entry names are bounded, single-segment, lowercase ASCII");
-    if (seen.has(entry.name)) throw new TypeError("content tree entry names must be unique");
-    seen.add(entry.name);
+    if (seen.has(name)) throw new TypeError("content tree entry names must be unique");
+    seen.add(name);
     // Identity admission stays with the original immutable NI owner. No rival
     // digest spelling or reinterpretation is admitted here.
-    admitAddress(entry.ni);
-    return { name: entry.name, ni: entry.ni };
+    admitAddress(ni);
+    return { name, ni };
   });
   ordered.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   return Buffer.from(JSON.stringify({

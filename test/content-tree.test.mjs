@@ -47,3 +47,25 @@ test("decode refuses additional fields, ordering variants and noncanonical UTF-8
   ]) assert.throws(() => decodeContentTree(Buffer.from(forged),immutableContentKey));
   assert.throws(() => decodeContentTree(Buffer.from([255,0]), immutableContentKey));
 });
+
+test("tree encoding never invokes accessor-backed names or addresses", () => {
+  let nameReads = 0;
+  const accessorName = Object.defineProperties({}, {
+    name: { enumerable: true, get() { nameReads++; return nameReads < 6 ? "safe" : "../escape"; } },
+    ni: { enumerable: true, value: ni("safe") },
+  });
+  assert.throws(() => encodeContentTree([accessorName], immutableContentKey), /own data fields/);
+  assert.equal(nameReads, 0, "untrusted getters cannot affect the admitted tree carrier");
+
+  let addressReads = 0;
+  const accessorAddress = Object.defineProperties({}, {
+    name: { enumerable: true, value: "safe" },
+    ni: { enumerable: true, get() { addressReads++; return addressReads === 1 ? ni("safe") : "sha256:unadmitted"; } },
+  });
+  assert.throws(() => encodeContentTree([accessorAddress], immutableContentKey), /own data fields/);
+  assert.equal(addressReads, 0, "an address cannot change between admission and serialization");
+
+  const hidden = { name: "safe", ni: ni("safe") };
+  Object.defineProperty(hidden, "silent", { value: true });
+  assert.throws(() => encodeContentTree([hidden], immutableContentKey), /exactly name and ni/);
+});
