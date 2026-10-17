@@ -24,26 +24,33 @@ const OPTIONS = Object.freeze({
   ni: { type: "string" },
   out: { type: "string" },
   "media-type": { type: "string" },
+  manifest: { type: "string" },
+  "maximum-nodes": { type: "string" },
+  "maximum-depth": { type: "string" },
 });
 const REQUIRED = Object.freeze({
   retain: ["config", "file"],
   put: ["config", "name", "expected", "path", "file"],
   link: ["config", "name", "expected", "path", "ni"],
+  "link-batch": ["config", "name", "expected", "manifest"],
   get: ["config", "out"],
   tree: ["config", "ni"],
   at: ["config", "name", "path"],
   resolve: ["config", "name"],
   list: ["config"],
+  walk: ["config"],
 });
 const PERMITTED = Object.freeze({
   retain: ["file", "media-type"],
   put: ["name", "expected", "path", "file", "media-type"],
   link: ["name", "expected", "path", "ni"],
+  "link-batch": ["name", "expected", "manifest"],
   get: ["out", "ni", "name", "path"],
   tree: ["ni"],
   at: ["name", "path"],
   resolve: ["name"],
   list: [],
+  walk: ["name", "ni", "maximum-nodes", "maximum-depth"],
 });
 
 const ordinary = (path, label) => {
@@ -97,6 +104,22 @@ function pathSegments(text) {
   catch { throw new TypeError("custody-space: --path must be a JSON array of canonical segments"); }
 }
 const expectation = value => value === "none" ? null : value;
+const naturalOption = (value, label) => {
+  if (value === undefined) return undefined;
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value) || !Number.isSafeInteger(Number(value)))
+    throw new TypeError(`custody-space: --${label} requires one canonical nonnegative integer`);
+  return Number(value);
+};
+function batchManifest(file) {
+  const bytes = boundedFile(file, 65536, "link manifest");
+  let value;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { throw new TypeError("custody-space: link manifest requires UTF-8 JSON"); }
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).length !== 1 || !Object.hasOwn(value, "links"))
+    throw new TypeError("custody-space: link manifest must contain only links");
+  return value.links;
+}
 
 /**
  * Run one originally supported operation against an installed host root.
@@ -104,7 +127,7 @@ const expectation = value => value === "none" ? null : value;
  */
 export async function runCustodySpace(argv) {
   if (!Array.isArray(argv) || argv.length < 1 || !Object.hasOwn(REQUIRED, argv[0]))
-    throw new TypeError("custody-space: expected retain, put, link, get, tree, at, resolve or list");
+    throw new TypeError("custody-space: expected retain, put, link, link-batch, walk, get, tree, at, resolve or list");
   const [command, ...args] = argv;
   const { values, positionals } = parseArgs({ args, options: OPTIONS, allowPositionals: true, strict: true });
   if (positionals.length !== 0) throw new TypeError("custody-space: unrecognized positional arguments");
@@ -134,6 +157,28 @@ export async function runCustodySpace(argv) {
         name: values.name, expected: expectation(values.expected),
         path: pathSegments(values.path), ni: values.ni,
       });
+    case "link-batch":
+      return space.linkPaths({
+        name: values.name, expected: expectation(values.expected),
+        links: batchManifest(values.manifest),
+      });
+    case "walk": {
+      const named = values.name !== undefined;
+      if (named === (values.ni !== undefined))
+        throw new TypeError("custody-space walk: select exactly one --name or --ni");
+      const rootNi = named ? space.resolve(values.name) : values.ni;
+      if (rootNi === null) return { found: false, name: values.name };
+      const maximumNodes = naturalOption(values["maximum-nodes"], "maximum-nodes");
+      const maximumDepth = naturalOption(values["maximum-depth"], "maximum-depth");
+      return {
+        found: true,
+        ...(named ? { name: values.name } : {}),
+        ...await space.walkTree(rootNi, {
+          ...(maximumNodes === undefined ? {} : { maximumNodes }),
+          ...(maximumDepth === undefined ? {} : { maximumDepth }),
+        }),
+      };
+    }
     case "get": {
       // Exactly one coordinate: either a direct NI or a named Merkle snapshot
       // slot. Never interpret a URL/file path as a content-addressed name.
