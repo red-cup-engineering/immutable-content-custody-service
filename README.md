@@ -349,3 +349,45 @@ These commands deliver a **shell-callable local shared-content producer**.
 Operating deployment, package release, remote IPFS transport, Guix
 realization, FluffOS object lifetimes, VaultMaze interaction and
 independently received TUFTE/CAIRN consumers are still separate work.
+
+
+## Source-owned agent publication into the same shared space
+
+An authenticated agent should not need another L-Space connector or a second
+content store to **make** material. The original custody package now publishes
+`createContentSpacePublicationMcpTools({ contentSpace, canPublish, canLinkSource })` from
+`./publication`. An installed FeltOS/MetroPlat host may compose these two
+native non-read-only tools into its ordinary operation surface:
+
+- `content_space_put_path`: exact, canonical, unpadded base64url bytes,
+  `mediaType`, host-admitted named root, bounded immutable tree slot array,
+  and an **explicit** `expected` NI or `null` for the first publication;
+- `content_space_link_path`: link an already retained NI into another admitted
+  named tree without copying its bytes, also by expected-root CAS.
+
+The host binds the *existing* `createContentAddressedSpace` to its independently
+installed durable directory and namespace inventory and supplies a
+`canPublish(context, { action, name, path })` callback, plus an independent
+`canLinkSource(context, ni)` admission for linking bytes the principal can
+already read, grounded in the
+**authenticated host principal and authority**, not a claimed identity,
+request body, header, UI route or tool argument. Both tools refuse unknown
+names and hidden fields before any custody effect. A denied principal never
+invokes the original writer. Empty data is a real NI body. The input cap is
+1 MiB by default (host-configurable up to 8 MiB); larger source artifacts use
+the existing host-owned `custody-space` command rather than implicit chunking.
+
+No new hashes, MIME parser, Merkle serialization or mutable-root mechanism are
+created. Raw identity, canonical media, read-back durability, retained-child
+checks and atomic compare-and-publish remain with the original custody, URI,
+File and named-reference owners. On success the host receives a typed immutable
+NI and new named root. An old `expected` root refuses, instead of losing an
+agent's concurrent work. Source-owning Code/Science/Operations packages can
+therefore publish in the *same* host-admitted space; CAIRN's `lspace_roots`,
+`lspace_tree` and `lspace_walk` are read-side views over this same producer.
+
+These are **native producer descriptors**, not themselves an installed principal,
+network server, separate agency identity, Science-owned site, or live MetroPlat
+binding. An operator must install this published package, bind the original
+shared contentSpace and per-actor grants, and independently receive the consumer
+before any network-facing agent can call it.
