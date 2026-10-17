@@ -103,25 +103,44 @@ export function createContentAddressedSpace({
     return decodeContentTree(retained.bytes, immutableContentKey);
   };
 
-  /**
-   * Read an immutable snapshot through an admitted name and explicit tree
-   * slots. Return the root NI too: a concurrent rebinding cannot turn an old
-   * snapshot into a claim about the new frontier.
-   */
+  /** One immutable NI path walk, with host-supplied read and child admission for bounded projections. */
+  const tracePath = async (rootNi, path = [], { readTree: reader = readTree, admitChild } = {}) => {
+    immutableContentKey(rootNi);
+    if (!Array.isArray(path) || path.length > 16 ||
+        typeof reader !== "function" ||
+        (admitChild !== undefined && typeof admitChild !== "function"))
+      throw new TypeError("content space: bounded path, reader and admission required");
+    const slots = path.length === 0 ? Object.freeze([]) : admitContentTreePath(path);
+    let ni = rootNi;
+    const steps = [];
+    for (const part of slots) {
+      const tree = await reader(ni);
+      if (tree === null) throw new Error("content space: path parent is unavailable");
+      if (!tree || !Array.isArray(tree.entries))
+        throw new TypeError("content space: source reader returned no content tree");
+      const found = tree.entries.filter(entry => entry.name === part);
+      if (found.length === 0) return null;
+      if (found.length !== 1 || typeof found[0].ni !== "string")
+        throw new TypeError("content space: ambiguous immutable link");
+      const next = found[0].ni;
+      immutableContentKey(next);
+      if (admitChild && await admitChild(next) !== true)
+        throw new RangeError("content space: addressed child not admitted");
+      steps.push(Object.freeze({ from: ni, via: part, to: next }));
+      ni = next;
+    }
+    return Object.freeze({ rootNi, ni, path: slots, steps: Object.freeze(steps) });
+  };
+
+  /** Read the named snapshot through that same original immutable path walk. */
   const atPath = async (name, path) => {
     const reference = holder(name);
     const slots = admitContentTreePath(path);
     const rootNi = reference.read();
     if (rootNi === null) return null;
-    let currentNi = rootNi;
-    for (const slot of slots) {
-      const tree = await readTree(currentNi);
-      if (tree === null) throw new Error("content space: path parent is unavailable");
-      const child = tree.entries.find(entry => entry.name === slot);
-      if (child === undefined) return null;
-      currentNi = child.ni;
-    }
-    const retained = await get(currentNi);
+    const trace = await tracePath(rootNi, slots);
+    if (trace === null) return null;
+    const retained = await get(trace.ni);
     if (retained === null) throw new Error("content space: path target is unavailable");
     return Object.freeze({ ...retained, rootNi, path: slots });
   };
@@ -198,6 +217,7 @@ export function createContentAddressedSpace({
      * No bytes are retained by inspecting an externally received carrier. */
     inspectTreeBytes: bytes => decodeContentTree(bytes, immutableContentKey),
     atPath,
+    tracePath,
     linkPath,
     putPath,
     get,
