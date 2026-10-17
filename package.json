@@ -15,8 +15,7 @@
     "./file-store": "./src/file-store.mjs",
     "./file-content": "./src/file-content-custody.mjs",
     "./file-reference": "./src/file-content-reference.mjs",
-    "./space": "./src/content-space.mjs",
-    "./publication": "./src/content-space-publication.mjs"
+    "./space": "./src/content-space.mjs"
   },
   "files": [
     "src",
