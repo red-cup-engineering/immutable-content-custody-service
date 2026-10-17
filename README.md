@@ -214,3 +214,82 @@ VaultMaze scene, or published TUFTE projection. Consumers must explicitly
 receive the newly installed package and bind their own lawful host roots.
 A tree proves the immutable links it *declares*, not a Wang-edge
 compatibility, a bead-weaving law, a Chu adjunction or sheaf gluing theorem.
+
+
+## Host-operated shared-space CLI
+
+The original package's `custody-space` executable exposes its **same**
+`./space` library to programs in other languages, shell scripts, and
+installed operators. It creates named immutable collections; it does **not**
+start a server, create actor credentials, mount Plan 9/9P, or manufacture a
+second content-addressing scheme.
+
+The actual host first installs the shared physical custody directory and an
+absolute, ordinary, access-controlled JSON configuration file, independently
+of any client request. For example, an authorized local machine operator
+could supply `/etc/561/content-space.json`:
+
+```json
+{
+  "root": "/srv/561/shared-content",
+  "durableRoot": "/srv/561/shared-content",
+  "maximumBytes": 8388608,
+  "namespaces": ["science/l-space", "engineering/source"]
+}
+```
+
+The host is responsible for provisioning that directory, its ancestor
+durability and file permissions. The command does not create the directory
+or decide which actor may use any of those namespaces. With that installation
+in place, a local authorized operator may invoke:
+
+```sh
+custody-space put \
+  --config /etc/561/content-space.json \
+  --name science/l-space --expected none \
+  --path '["tilings","wang"]' \
+  --file /var/lib/561/admitted/wang.txt \
+  --media-type text/plain
+```
+
+This prints one JSON line including the received raw NI (`ni`) and the
+new immutable collection root (`rootNi`). Reuse that *exact returned* root
+for subsequent compare-and-publish operations:
+
+```sh
+custody-space put --config /etc/561/content-space.json \
+  --name science/l-space --expected 'ni:///sha-256;THE_RETURNED_ROOT_DIGEST' \
+  --path '["tilings","beads"]' \
+  --file /var/lib/561/admitted/beads.bin
+custody-space resolve --config /etc/561/content-space.json --name science/l-space
+custody-space at --config /etc/561/content-space.json \
+  --name science/l-space --path '["tilings","wang"]'
+custody-space tree --config /etc/561/content-space.json \
+  --ni 'ni:///sha-256;THE_RETURNED_ROOT_DIGEST'
+custody-space list --config /etc/561/content-space.json
+```
+
+`retain` stores one host-admitted file without a named root. `link`
+composes a previously retained exact `--ni` into a new named tree without
+reading that source file again. `put` stores the input and composes it in
+one command. `tree`, `at`, `resolve` and `list` perform bounded reads.
+`--expected none` means an initially absent name; subsequent updates
+MUST carry the previously returned root NI. `--path` is a JSON array of
+canonical single-segment slot names, **never a filesystem path**, URL or
+proof of typed semantic adjacency. Input files must be absolute regular
+non-symlink paths and are rechecked during bounded admission.
+
+Output uses one line of JSON with no raw bytes. For retrieving original
+content into a new physical file, the existing `custody-file get --root
+/srv/561/shared-content --ni <address> --out <new-file>` operates over
+the same NI object keys; the separately granted host must authorize both
+the content and the output location. Its original `get` is not a network
+operation or a per-actor disclosure check. An absent, stale or forged root
+cannot be used to grant child access. For private L-Space, the CAIRN
+reader retains its independent `canReadSources` and `canReadContentSpace`
+checks.
+
+These commands deliver a **shell-callable local shared-content producer**.
+Operating deployment, package release, remote IPFS transport, Guix
+realization, FluffOS object lifetimes, VaultMaze interaction and
+independently received TUFTE/CAIRN consumers are still separate work.
