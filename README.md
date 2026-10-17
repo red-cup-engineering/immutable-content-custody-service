@@ -351,6 +351,88 @@ realization, FluffOS object lifetimes, VaultMaze interaction and
 independently received TUFTE/CAIRN consumers are still separate work.
 
 
+## Atomic collection fabrication and bounded legibility (source addition, October 17, 2026)
+
+The original custody `./space` maker now exposes `linkPaths({name, expected,
+links})`. Each link is **only** an explicitly admitted `{path: string[], ni}`
+record. The method accepts 1–128 links to already retained original NI bytes,
+requires canonical path segments, and rejects duplicates, ancestor/descendant
+overlaps, unheld targets, invalid ancestors and an out-of-date named root.
+It materializes all changed immutable ancestors using the *existing*
+`retainTree` and performs **one** original frontier compare-and-publish after
+the entire collection exists. A refused or losing writer may leave immutable,
+unreferenced source bytes but cannot announce a partial new root. The earlier
+`linkPath` delegates to the same maker and keeps its existing receipt shape.
+No Git object, CID, 9P path, Guix store item, Chu evaluation or Wang-edge
+compatibility is inferred from these links.
+
+```js
+const wang = await space.retain(new TextEncoder().encode("north=blue;east=red"), {
+  mediaType: "text/plain",
+});
+const bead = await space.retain(new TextEncoder().encode("entry->exit"), {
+  mediaType: "text/plain",
+});
+const assembled = await space.linkPaths({
+  name: "science/l-space",
+  expected: space.resolve("science/l-space"),
+  links: [
+    { path: ["tilings", "wang"], ni: wang.ni },
+    { path: ["beadwork", "ports"], ni: bead.ni },
+  ],
+});
+const reading = await space.walkTree(assembled.rootNi, {
+  maximumNodes: 64,
+  maximumDepth: 16,
+  // An untrusted reader supplies independent authorization for EVERY child.
+  admitChild: async (ni, context) => admittedChildForActualPrincipal(ni, context),
+});
+```
+
+`walkTree(rootNi, {maximumNodes=256, maximumDepth=16, admitChild?})`
+is the original custody-owned, bounded Merkle **inventory**. It returns
+sorted depth-first path occurrences with exact canonical NI, verified media
+type and byte count, distinguishing object leaves from tree carriers. A
+repeated child retains **one NI but every distinct appearance**. It refuses
+on an incomplete/missing body, denied descendant, malformed tree, depth
+overrun, node overrun or cyclic path, rather than returning a misleading
+complete-looking partial traversal. It does not return source bodies, infer
+application relationships or grant a root reader permission to see children.
+Root access remains a separate host admission. Maximum node count is 2048
+and maximum depth is 16, both subject to smaller caller budgets.
+
+The same original host CLI adds `link-batch` and `walk`, which are only
+available when the newly built package is actually installed. The
+host-provisioned config still fixes storage, namespaces and byte budget:
+
+```sh
+# First invoke custody-space retain for each source and use the exact
+# returned NI values in a canonical UTF-8 manifest, such as:
+# {"links":[{"path":["tilings","wang"],"ni":"<actual-ni>"},
+#           {"path":["beadwork","ports"],"ni":"<actual-ni>"}]}
+custody-space link-batch --config /etc/561/content-space.json \
+  --name science/l-space --expected none \
+  --manifest /var/lib/561/admitted/collection.json
+custody-space walk --config /etc/561/content-space.json \
+  --name science/l-space --maximum-nodes 128 --maximum-depth 16
+```
+
+The batch manifest must be an absolute stable ordinary file, at most 64 KiB
+and exactly a JSON record with `links`; no submitted manifest can choose the
+host root or credentials. For later publications replace `--expected none`
+with the **exact previously returned** `rootNi`. `walk` also accepts a
+direct `--ni` in place of `--name`, but not both. Its JSON output contains
+only structural observations, not raw source data. Independent consumers
+may read `atPath` or `custody-space get` from the same configured
+physical custody, each subject to its own actor and content read grants.
+
+This is **source fabrication plus original test cases**, not yet a published
+registry edition, running CI, commissioned host, remote peer transfer,
+Science site formation or a CAIRN/TUFTE/VaultMaze installation. Downstream
+Data → Code → Networking → Systems integration must select a genuinely
+available released upstream package; do not fabricate a second native tree
+builder or short-circuit original principal admission to simulate delivery.
+
 ## Producer/agent boundary — no custody-owned MCP adapter
 
 The original `./space` API owns exact bytes, Merkle trees, names and durable
