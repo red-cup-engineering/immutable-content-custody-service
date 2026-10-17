@@ -248,3 +248,77 @@ test("installed npm-style bin symlink actually enters the CLI and retrieves orig
   assert.equal(JSON.parse(get.stdout).ni,receipt.ni);
   assert.deepEqual(readFileSync(destination),readFileSync(source));
 });
+
+
+test("host CLI atomically publishes Wang and bead material through one manifest and exposes a bounded tree view", async t => {
+  const { tmp, root, source, args } = fixture(t);
+  const beadFile = join(tmp, "ported-bead.json");
+  writeFileSync(beadFile, JSON.stringify({ kind:"ported-bead", ports:["entry","exit"] }));
+  const wang = await runCustodySpace(args("retain", { file: source, "media-type":"text/plain" }));
+  const bead = await runCustodySpace(args("retain", { file: beadFile, "media-type":"application/json" }));
+  const manifest = join(tmp, "batch.json");
+  writeFileSync(manifest, JSON.stringify({ links: [
+    { path: ["tilings", "wang"], ni: wang.ni },
+    { path: ["weaves", "bead"], ni: bead.ni },
+  ] }));
+  const published = await runCustodySpace(args("link-batch", {
+    name:"science/l-space", expected:"none", manifest,
+  }));
+  assert.equal(published.published, true);
+  assert.equal(published.links.length, 2);
+  const cliWalk = spawnSync(process.execPath, [cli, ...args("walk", {
+    name:"science/l-space", "maximum-nodes":"5", "maximum-depth":"2",
+  })], { encoding:"utf8" });
+  assert.equal(cliWalk.status, 0, cliWalk.stderr);
+  const inventory = JSON.parse(cliWalk.stdout);
+  assert.equal(inventory.count, 5);
+  assert.deepEqual(inventory.nodes.filter(row => row.kind === "object").map(row => row.ni),
+    [wang.ni, bead.ni], "canonical sorting applies to immediate tree slots");
+  assert.equal(cliWalk.stdout.includes("north=blue"), false);
+  const consumer = createContentAddressedSpace({
+    root, durableRoot:root, namespaces:["science/l-space"],
+  });
+  assert.deepEqual((await consumer.atPath("science/l-space", ["weaves", "bead"])).bytes,
+    readFileSync(beadFile));
+  assert.deepEqual((await consumer.atPath("science/l-space", ["tilings", "wang"])).bytes,
+    readFileSync(source));
+});
+
+test("CLI batch and walk refuse forged, overlapping, stale and over-budget instructions without announcing names", async t => {
+  const { tmp, source, args } = fixture(t);
+  const held = await runCustodySpace(args("retain", {file: source}));
+  const manifest = join(tmp,"batch.json");
+  const run = links => {
+    writeFileSync(manifest, JSON.stringify({links}));
+    return runCustodySpace(args("link-batch", {
+      name:"engineering/source", expected:"none", manifest,
+    }));
+  };
+  await assert.rejects(run([
+    {path:["same"],ni:held.ni},
+    {path:["same","nested"],ni:held.ni},
+  ]), /overlapping|contain another/);
+  await assert.rejects(run([{path:["a"],ni:"ni:///sha-256;forged"}]));
+  await assert.rejects(run([{path:["absent"],ni:held.ni}, {path:["bad/slot"],ni:held.ni}]));
+  assert.equal((await runCustodySpace(args("resolve",{name:"engineering/source"}))).ni,null);
+  const committed = await run([{path:["ok"],ni:held.ni}]);
+  await assert.rejects(run([{path:["late"],ni:held.ni}]), /changed before publication/);
+  assert.equal((await runCustodySpace(args("resolve",{name:"engineering/source"}))).ni,committed.rootNi);
+  await assert.rejects(runCustodySpace(args("walk", {
+    name:"engineering/source", "maximum-nodes":"1",
+  })), /exceeds node budget/);
+  await assert.rejects(runCustodySpace(args("walk", {
+    name:"engineering/source", "maximum-depth":"0",
+  })), /exceeds depth budget/);
+  await assert.rejects(runCustodySpace(args("walk", {
+    ni:held.ni, name:"engineering/source",
+  })), /exactly one/);
+  await assert.rejects(runCustodySpace(args("walk", {
+    ni:held.ni, "maximum-nodes":"00",
+  })), /canonical nonnegative/);
+  writeFileSync(manifest, JSON.stringify({links:[{path:["new"],ni:held.ni}],root:"/etc"}));
+  await assert.rejects(runCustodySpace(args("link-batch", {
+    name:"science/l-space",expected:"none",manifest,
+  })), /manifest must contain only links/);
+  assert.equal((await runCustodySpace(args("resolve",{name:"science/l-space"}))).ni,null);
+});
