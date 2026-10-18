@@ -4,6 +4,11 @@
   "private": false,
   "type": "module",
   "description": "Retains and retrieves exact content-addressed bytes through an injected object store.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/red-cup-engineering/uri-services-section.git",
+    "directory": "services/ni-services-section/services/immutable-content-custody-service"
+  },
   "keywords": [
     "content-addressing",
     "immutable-content",
