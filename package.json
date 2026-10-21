@@ -38,9 +38,13 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "bin": {
     "custody-file": "./scripts/custody-file.mjs",
     "custody-space": "./scripts/custody-space.mjs"
+  },
+  "funding": {
+    "type": "individual",
+    "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   }
 }
