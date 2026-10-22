@@ -1,6 +1,6 @@
 {
   "name": "@red-cup-engineering/immutable-content-custody-service",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": false,
   "type": "module",
   "description": "Retains and retrieves exact content-addressed bytes through an injected object store.",
@@ -19,7 +19,8 @@
     "./file-store": "./src/file-store.mjs",
     "./file-content": "./src/file-content-custody.mjs",
     "./file-reference": "./src/file-content-reference.mjs",
-    "./space": "./src/content-space.mjs"
+    "./space": "./src/content-space.mjs",
+    "./carrier-snapshot": "./src/carrier-snapshot.mjs"
   },
   "files": [
     "src",
