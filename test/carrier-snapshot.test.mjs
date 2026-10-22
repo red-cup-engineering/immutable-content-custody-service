@@ -1,0 +1,108 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { makeNiUri } from "@red-cup-engineering/uri-services-section/ni-uri";
+import { createContentAddressedSpace } from "../src/content-space.mjs";
+import {
+  CARRIER_SNAPSHOT_MEDIA_TYPE, admitCarrier, admitCarrierPath, decodeCarrierSnapshot,
+  directoryCarrierFiles, readCarrierSnapshot, retainCarrierSnapshot,
+} from "../src/carrier-snapshot.mjs";
+
+function fixture(t) {
+  const root = mkdtempSync(join(tmpdir(), "carrier-space-"));
+  const carrier = mkdtempSync(join(tmpdir(), "carrier-files-"));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(carrier, { recursive: true, force: true }); });
+  return { carrier, space: createContentAddressedSpace({ root, durableRoot: root, namespaces: ["repository"] }) };
+}
+const write = (root, path, text) => {
+  mkdirSync(join(root, path, ".."), { recursive: true });
+  writeFileSync(join(root, path), text);
+};
+const collect = async iterator => { const all = []; for await (const item of iterator) all.push(item); return all; };
+
+test("a directory carrier is admitted as exact bytes plus an addressed reading of its case-preserving paths", async t => {
+  const { carrier, space } = fixture(t);
+  write(carrier, "README.md", "# L-Space\n");
+  write(carrier, "sections/Science/SKILL.md", "conduct jiancha\n");
+  write(carrier, "sections/Science/copy.md", "# L-Space\n");
+  write(carrier, "node_modules/dep/index.js", "never carried\n");
+  write(carrier, ".git/HEAD", "ref: refs/heads/main\n");
+  symlinkSync(join(carrier, "README.md"), join(carrier, "link.md"));
+  const admitted = await admitCarrier(space, directoryCarrierFiles(carrier));
+  assert.equal(admitted.entries, 3, "symlinks, dependency installs and VCS state are not carried content");
+  assert.equal(admitted.skippedCount, 0);
+  const entries = await collect(readCarrierSnapshot(space, admitted.ni));
+  assert.deepEqual(entries.map(entry => entry.path), ["README.md", "sections/Science/SKILL.md", "sections/Science/copy.md"]);
+  const readme = makeNiUri(Buffer.from("# L-Space\n"));
+  assert.equal(entries[0].ni, readme);
+  assert.equal(entries[2].ni, readme, "two paths holding the same bytes name one body");
+  assert.equal(entries[0].mediaType, "text/markdown");
+  assert.deepEqual((await space.get(entries[1].ni)).bytes, Buffer.from("conduct jiancha\n"));
+  assert.equal((await space.head(admitted.ni)).mediaType, CARRIER_SNAPSHOT_MEDIA_TYPE);
+  const bound = await space.bind({ name: "repository", expected: null, ni: admitted.ni });
+  assert.equal(bound.ni, admitted.ni);
+  assert.deepEqual(space.list(), [{ name: "repository", ni: admitted.ni }]);
+});
+
+test("unchanged files are not reread, and an edit changes the snapshot without losing the earlier one", async t => {
+  const { carrier, space } = fixture(t);
+  write(carrier, "a.md", "alpha\n");
+  write(carrier, "b.md", "beta\n");
+  const known = new Map();
+  const first = await admitCarrier(space, directoryCarrierFiles(carrier), { known });
+  const again = await admitCarrier(space, directoryCarrierFiles(carrier), { known });
+  assert.equal(again.ni, first.ni, "the same observation is the same snapshot");
+  assert.equal(again.reused, 2);
+  write(carrier, "b.md", "beta, revised\n");
+  const edited = await admitCarrier(space, directoryCarrierFiles(carrier), { known });
+  assert.notEqual(edited.ni, first.ni);
+  assert.equal((await collect(readCarrierSnapshot(space, first.ni)))[1].ni, makeNiUri(Buffer.from("beta\n")),
+    "an earlier snapshot still reads its own bytes after the carrier moved on");
+});
+
+test("the same bytes observed under two media types keep one body and both observations", async t => {
+  const { carrier, space } = fixture(t);
+  write(carrier, "empty.md", "");
+  write(carrier, "empty.json", "");
+  const admitted = await admitCarrier(space, directoryCarrierFiles(carrier));
+  const entries = await collect(readCarrierSnapshot(space, admitted.ni));
+  assert.deepEqual(entries.map(entry => [entry.path, entry.mediaType]),
+    [["empty.json", "application/json"], ["empty.md", "text/markdown"]]);
+  assert.equal(entries[0].ni, entries[1].ni);
+});
+
+test("files beyond custody's budget are reported, not silently dropped or truncated", async t => {
+  const { carrier, space } = fixture(t);
+  write(carrier, "small.txt", "ok\n");
+  write(carrier, "big.bin", Buffer.alloc(2048));
+  const admitted = await admitCarrier(space, directoryCarrierFiles(carrier), { maximumFileBytes: 1024 });
+  assert.equal(admitted.entries, 1);
+  assert.deepEqual(admitted.skipped, [{ path: "big.bin", reason: "too-large" }]);
+});
+
+test("large carriers are cut into content-defined parts that an edit mostly preserves", async t => {
+  const { space } = fixture(t);
+  const body = await space.retain(Buffer.from("x"));
+  const many = Array.from({ length: 5000 }, (_, i) => ({ path: `notes/${String(i).padStart(5, "0")}.md`, ni: body.ni, mediaType: "text/markdown", byteLength: 1 }));
+  const first = await retainCarrierSnapshot(space, many);
+  assert.ok(first.parts > 2, "thousands of entries do not form one unbounded object");
+  const root = decodeCarrierSnapshot((await space.get(first.ni)).bytes);
+  const changed = await retainCarrierSnapshot(space, [...many.slice(0, 2500), ...many.slice(2501)]);
+  const after = decodeCarrierSnapshot((await space.get(changed.ni)).bytes);
+  const shared = after.parts.filter(ni => root.parts.includes(ni)).length;
+  assert.ok(shared >= root.parts.length - 2, "removing one path rewrites only the part around it");
+  assert.equal((await collect(readCarrierSnapshot(space, changed.ni))).length, 4999);
+});
+
+test("snapshot bytes and paths are canonical and cannot traverse", () => {
+  for (const bad of ["", "/abs", "a//b", "a/./b", "a/../b", "a\0b", "x".repeat(4097)])
+    assert.throws(() => admitCarrierPath(bad), /relative POSIX path|nonempty/);
+  const ni = makeNiUri(Buffer.from("x"));
+  const canonical = Buffer.from(JSON.stringify({ kind: "semiotic-content.carrier-snapshot-part", version: 1, entries: [["a", ni, "text/plain", 1]] }) + "\n");
+  assert.equal(decodeCarrierSnapshot(canonical).entries.length, 1);
+  assert.throws(() => decodeCarrierSnapshot(Buffer.from(canonical.toString().replace("\n", " \n"))), /canonical/);
+  assert.throws(() => decodeCarrierSnapshot(Buffer.from(JSON.stringify({ kind: "semiotic-content.carrier-snapshot-part", version: 1,
+    entries: [["b", ni, "text/plain", 1], ["a", ni, "text/plain", 1]] }) + "\n")), /sorted/);
+});
