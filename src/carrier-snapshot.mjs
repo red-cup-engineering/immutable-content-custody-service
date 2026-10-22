@@ -205,18 +205,42 @@ export function* directoryCarrierFiles(root, { excludes = DEFAULT_CARRIER_EXCLUD
  * retain the snapshot of where they were observed. `known` maps a file's
  * path+stamp to its NI from an earlier admission, so unchanged files are not
  * reread. Files too large for custody are reported, never silently dropped.
+ *
+ * `retain(bytes, mediaType)` may be supplied to carry retention elsewhere
+ * (another thread or process holding the same space) and `concurrency`
+ * bounds how many retentions are in flight. `onCheckpoint` receives a snapshot
+ * of every entry retained so far after each `checkpointEvery` entries, so a
+ * long first admission becomes readable progressively.
  */
 export async function admitCarrier(space, files, {
   maximumFileBytes = 8 * 1024 * 1024, known = new Map(), mediaTypeOf = extensionType,
-  maximumSkipped = 64, signal, onProgress,
+  maximumSkipped = 64, signal, onProgress, concurrency = 1,
+  retain = (bytes, mediaType) => space.retain(bytes, { mediaType }),
+  checkpointEvery, onCheckpoint,
 } = {}) {
   if (typeof space?.retain !== "function" || typeof space?.head !== "function")
     throw new TypeError("carrier: an installed content space is required");
-  const entries = [], skipped = [], seen = new Map();
-  let retained = 0, reused = 0, skippedCount = 0, bytes = 0;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 256)
+    throw new RangeError("carrier: concurrency is 1 through 256 retentions in flight");
+  const entries = [], skipped = [], retaining = new Map(), inFlight = new Set();
+  let retained = 0, reused = 0, skippedCount = 0, bytes = 0, failure;
   const skip = (path, reason) => { skippedCount++; if (skipped.length < maximumSkipped) skipped.push(Object.freeze({ path, reason })); };
+  const settle = async () => {
+    await Promise.all(inFlight);
+    if (failure !== undefined) throw failure;
+  };
+  const retainOne = async (body, ni, mediaType) => {
+    try { await retain(body, mediaType); }
+    catch (error) {
+      // One NI is one body: the same bytes first retained under another
+      // media type are still held. The observed type stays on its entry.
+      if (await space.head(ni) === null) throw error;
+    }
+    retained++;
+  };
   for (const file of files) {
     signal?.throwIfAborted();
+    if (failure !== undefined) throw failure;
     let path;
     try { path = admitCarrierPath(file.path); } catch { skip(String(file.path).slice(0, 256), "path"); continue; }
     if (!Number.isSafeInteger(file.size) || file.size < 0) { skip(path, "size"); continue; }
@@ -225,30 +249,32 @@ export async function admitCarrier(space, files, {
     const key = file.stamp === undefined ? undefined : path + "\0" + file.stamp;
     let ni = key === undefined ? undefined : known.get(key);
     let byteLength = file.size;
-    if (ni !== undefined) { reused++; }
+    if (ni !== undefined) reused++;
     else {
       let body;
       try { body = file.read(); } catch { skip(path, "unreadable"); continue; }
       // The bytes actually read are what is retained and observed.
       byteLength = body.length;
       if (byteLength > maximumFileBytes) { skip(path, "too-large"); continue; }
-      ni = makeNiUri(body);
-      if (!seen.has(ni)) {
-        try { await space.retain(body, { mediaType }); }
-        catch (error) {
-          // One NI is one body: the same bytes first retained under another
-          // media type are still held. The observed type stays on this entry.
-          if (await space.head(ni) === null) throw error;
-        }
-        retained++;
-      }
-      if (key !== undefined) known.set(key, ni);
+      const address = ni = makeNiUri(body);
+      if (!retaining.has(address)) {
+        const held = retainOne(body, address, mediaType).then(
+          () => { if (key !== undefined) known.set(key, address); },
+          error => { failure ??= error; }).finally(() => inFlight.delete(held));
+        retaining.set(address, held);
+        inFlight.add(held);
+        if (inFlight.size >= concurrency) await Promise.race(inFlight);
+      } else if (key !== undefined) retaining.get(address).then(() => { if (failure === undefined) known.set(key, address); });
     }
-    seen.set(ni, true);
     bytes += byteLength;
     entries.push([path, ni, mediaType, byteLength]);
     if (onProgress !== undefined && entries.length % 1024 === 0) await onProgress({ entries: entries.length, retained, reused });
+    if (onCheckpoint !== undefined && checkpointEvery > 0 && entries.length % checkpointEvery === 0) {
+      await settle();
+      await onCheckpoint(await retainCarrierSnapshot(space, entries));
+    }
   }
+  await settle();
   const snapshot = await retainCarrierSnapshot(space, entries);
   return Object.freeze({ ...snapshot, retained, reused, bytes,
     skipped: Object.freeze(skipped), skippedCount });

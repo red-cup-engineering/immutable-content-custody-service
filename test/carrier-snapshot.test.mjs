@@ -106,3 +106,28 @@ test("snapshot bytes and paths are canonical and cannot traverse", () => {
   assert.throws(() => decodeCarrierSnapshot(Buffer.from(JSON.stringify({ kind: "semiotic-content.carrier-snapshot-part", version: 1,
     entries: [["b", ni, "text/plain", 1], ["a", ni, "text/plain", 1]] }) + "\n")), /sorted/);
 });
+
+test("retention can run elsewhere and concurrently, and a long admission is readable at each checkpoint", async t => {
+  const { carrier, space } = fixture(t);
+  for (let i = 0; i < 40; i++) write(carrier, `notes/${String(i).padStart(2, "0")}.md`, `note ${i % 30}\n`);
+  let inFlight = 0, most = 0, calls = 0;
+  const retain = async (bytes, mediaType) => {
+    calls++; inFlight++; most = Math.max(most, inFlight);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    try { return await space.retain(bytes, { mediaType }); } finally { inFlight--; }
+  };
+  const checkpoints = [];
+  const admitted = await admitCarrier(space, directoryCarrierFiles(carrier), {
+    concurrency: 4, retain, checkpointEvery: 16, onCheckpoint: snapshot => { checkpoints.push(snapshot); },
+  });
+  assert.equal(calls, 30, "thirty distinct bodies are retained once each");
+  assert.ok(most > 1 && most <= 4, "retention is concurrent within its bound");
+  assert.deepEqual(checkpoints.map(snapshot => snapshot.entries), [16, 32]);
+  assert.equal((await collect(readCarrierSnapshot(space, checkpoints[0].ni))).length, 16,
+    "a checkpoint names only entries whose bodies are already held");
+  assert.equal(admitted.entries, 40);
+  const failing = await admitCarrier(space, directoryCarrierFiles(carrier), {
+    known: new Map(), retain: async () => { throw new Error("disk full"); },
+  }).then(() => null, error => error);
+  assert.equal(failing, null, "bodies already held survive a retention error");
+});
