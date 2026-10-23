@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -130,4 +131,56 @@ test("retention can run elsewhere and concurrently, and a long admission is read
     known: new Map(), retain: async () => { throw new Error("disk full"); },
   }).then(() => null, error => error);
   assert.equal(failing, null, "bodies already held survive a retention error");
+});
+
+test("literal selections never enumerate a directory and retain original incremental NI snapshots", async t => {
+  const { carrier, space } = fixture(t);
+  write(carrier, "README.md", "bounded orientation\n");
+  write(carrier, "notes/empty.md", "");
+  write(carrier, "unselected/deep/submodule/large.bin", "not selected\n");
+  const original = fs.readdirSync;
+  fs.readdirSync = () => { throw new Error("unselected directory enumeration attempted"); };
+  syncBuiltinESMExports();
+  let first, again;
+  try {
+    const known = new Map(), options = { paths: ["README.md", "notes/empty.md"], maximumFileBytes: 64, maximumBytes: 128 };
+    const files = [...directoryCarrierFiles(carrier, options)];
+    assert.deepEqual(files.map(x => x.path), options.paths);
+    assert.equal(files[1].read().length, 0);
+    first = await admitCarrier(space, files, { known });
+    again = await admitCarrier(space, directoryCarrierFiles(carrier, options), { known });
+    assert.equal(again.reused, 2);
+    assert.equal(again.ni, first.ni);
+    write(carrier, "README.md", "bounded orientation revised\n");
+    const changed = await admitCarrier(space, directoryCarrierFiles(carrier, options), { known });
+    assert.notEqual(changed.ni, first.ni);
+  } finally { fs.readdirSync = original; syncBuiltinESMExports(); }
+  assert.equal((await collect(readCarrierSnapshot(space, first.ni))).length, 2);
+});
+
+test("the entire literal selection refuses before yielding on invalid, missing, excluded or over-budget subjects", t => {
+  const { carrier } = fixture(t);
+  write(carrier, "a.md", "alpha");
+  write(carrier, "b.md", "beta");
+  const first = options => directoryCarrierFiles(carrier, options).next();
+  for (const paths of [[], ["a.md", "a.md"], ["../escape"], ["a.md", "missing.md"], ["node_modules/no.md"], Array(1025).fill(0).map((_,i) => `${i}.md`), Array(65).fill(0).map((_,i) => `${i}${"x".repeat(1024)}.md`)])
+    assert.throws(() => first({ paths }));
+  for (const options of [{ maximumFileBytes: 4 }, { maximumBytes: 8 }, { maximumFileBytes: 0 }, { maximumBytes: 64 * 1024 * 1024 + 1 }])
+    assert.throws(() => first({ paths: ["a.md", "b.md"], ...options }), /byte bounds|byte budget/);
+});
+
+test("literal selection refuses symlink roots/ancestry and file identity drift at its original reader", t => {
+  const { carrier } = fixture(t);
+  write(carrier, "notes/a.md", "alpha");
+  symlinkSync(join(carrier, "notes"), join(carrier, "link"));
+  assert.throws(() => [...directoryCarrierFiles(carrier, { paths: ["link/a.md"] })], /unredirected/);
+  assert.throws(() => [...directoryCarrierFiles(join(carrier, "link"), { paths: ["a.md"] })], /unredirected|not a directory/);
+  const [selected] = directoryCarrierFiles(carrier, { paths: ["notes/a.md"] });
+  rmSync(join(carrier, "notes/a.md")); write(carrier, "notes/a.md", "other");
+  assert.throws(() => selected.read(), /changed/);
+  const [again] = directoryCarrierFiles(carrier, { paths: ["notes/a.md"] });
+  rmSync(join(carrier, "notes"), { recursive: true });
+  mkdirSync(join(carrier, "elsewhere"));
+  symlinkSync(join(carrier, "elsewhere"), join(carrier, "notes"));
+  assert.throws(() => again.read(), /unredirected/);
 });

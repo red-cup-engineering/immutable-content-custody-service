@@ -17,7 +17,7 @@
  * file rewrites one part and the small root, not the whole snapshot.
  */
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { makeNiUri } from "@red-cup-engineering/uri-services-section/ni-uri";
 import { extensionType } from "@red-cup-engineering/computer-serialized-content-engineering-services-section/services/http-data-services-section/src/media-type";
@@ -27,6 +27,8 @@ export const CARRIER_SNAPSHOT_MEDIA_TYPE = "application/vnd.561.carrier-snapshot
 export const CARRIER_SNAPSHOT_KIND = "semiotic-content.carrier-snapshot";
 export const CARRIER_SNAPSHOT_PART_KIND = "semiotic-content.carrier-snapshot-part";
 export const CARRIER_SNAPSHOT_VERSION = 1;
+/** A caller requiring finite selection MUST receive this provider contract. */
+export const EXPLICIT_CARRIER_FILES_VERSION = 1;
 /** Directories that hold tool state, dependency installs or VCS objects rather than carried content. */
 export const DEFAULT_CARRIER_EXCLUDES = Object.freeze(["node_modules", ".git", ".pnpm-store"]);
 
@@ -150,11 +152,16 @@ export async function* readCarrierSnapshot(space, ni) {
   }
 }
 
-function readWhole(file, size) {
-  const descriptor = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size &&
+  a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+
+function readWhole(file, size, expected) {
+  const descriptor = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) |
+    (expected === undefined ? 0 : (constants.O_NONBLOCK ?? 0)));
   try {
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.size !== size) throw new Error("carrier file changed while it was read");
+    if (!opened.isFile() || opened.size !== size || (expected !== undefined && !sameFile(opened, expected)))
+      throw new Error("carrier file changed while it was read");
     const bytes = Buffer.alloc(size);
     let offset = 0;
     while (offset < size) {
@@ -162,8 +169,49 @@ function readWhole(file, size) {
       if (count === 0) throw new Error("carrier file shrank while it was read");
       offset += count;
     }
+    if (expected !== undefined && (!sameFile(fstatSync(descriptor), expected) || !sameFile(lstatSync(file), expected)))
+      throw new Error("carrier file changed while it was read");
     return bytes;
   } finally { closeSync(descriptor); }
+}
+
+/** Receive every literal file before yielding any observation; never enumerate. */
+function selectedCarrierFiles(root, paths, excludes, maximumFileBytes, maximumBytes) {
+  if (!Array.isArray(paths) || paths.length < 1 || paths.length > 1024 || new Set(paths).size !== paths.length)
+    throw new TypeError("carrier: 1 through 1024 unique literal paths are required");
+  const selected = paths.map(admitCarrierPath);
+  if (selected.reduce((sum, path) => sum + Buffer.byteLength(path), 0) > 65536)
+    throw new RangeError("carrier: selected path byte budget exceeded");
+  for (const [value, cap] of [[maximumFileBytes, 8 * 1024 * 1024], [maximumBytes, 64 * 1024 * 1024]])
+    if (!Number.isSafeInteger(value) || value < 1 || value > cap)
+      throw new RangeError("carrier: explicit selection byte bounds exceed the finite provider budget");
+  if (realpathSync(root) !== root) throw new TypeError("carrier: selected anchor must be unredirected");
+  const skip = new Set(excludes);
+  const receivedFile = path => {
+    let current = root;
+    const segments = path.split("/");
+    for (let i = 0; i < segments.length; i++) {
+      if (skip.has(segments[i])) throw new TypeError("carrier: selected path includes excluded material");
+      current = join(current, segments[i]);
+      const stat = lstatSync(current);
+      if (i < segments.length - 1 ? !stat.isDirectory() : !stat.isFile())
+        throw new TypeError("carrier: selected ancestry must be unredirected directories and regular files");
+    }
+    return lstatSync(current);
+  };
+  let total = 0;
+  return selected.map(path => {
+    const stat = receivedFile(path), file = join(root, path);
+    if (!Number.isSafeInteger(stat.size) || stat.size > maximumFileBytes || (total += stat.size) > maximumBytes)
+      throw new RangeError("carrier: selected body byte budget exceeded");
+    return Object.freeze({ path, size: stat.size,
+      stamp: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`,
+      read: () => {
+        if (realpathSync(root) !== root || !sameFile(receivedFile(path), stat))
+          throw new Error("carrier file changed while it was read");
+        return readWhole(file, stat.size, stat);
+      } });
+  });
 }
 
 /**
@@ -171,9 +219,14 @@ function readWhole(file, size) {
  * are not followed; excluded names are skipped at any depth. Each file offers a
  * cheap stamp (size, mtime, inode) so an admitting host can skip unchanged bytes.
  */
-export function* directoryCarrierFiles(root, { excludes = DEFAULT_CARRIER_EXCLUDES } = {}) {
+export function* directoryCarrierFiles(root, { excludes = DEFAULT_CARRIER_EXCLUDES, paths,
+  maximumFileBytes = 8 * 1024 * 1024, maximumBytes = 64 * 1024 * 1024 } = {}) {
   if (typeof root !== "string" || !root.startsWith("/")) throw new TypeError("carrier: an absolute host-selected directory is required");
   if (!lstatSync(root).isDirectory()) throw new TypeError("carrier: the host-selected carrier is not a directory");
+  if (paths !== undefined) {
+    yield* selectedCarrierFiles(root, paths, excludes, maximumFileBytes, maximumBytes);
+    return;
+  }
   const skip = new Set(excludes);
   const pending = [""];
   while (pending.length > 0) {
