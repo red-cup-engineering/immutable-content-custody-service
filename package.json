@@ -34,7 +34,7 @@
     "@red-cup-engineering/computer-serialized-content-engineering-services-section": "0.1.0",
     "@red-cup-engineering/computer-filepath-engineering-services-section": "0.1.0",
     "@red-cup-engineering/computer-file-engineering-services-section": "0.4.0",
-    "@red-cup-engineering/uri-engineering-services-section": "0.1.1"
+    "@red-cup-engineering/uri-services-section": "0.1.1"
   },
   "engines": {
     "node": ">=22"
