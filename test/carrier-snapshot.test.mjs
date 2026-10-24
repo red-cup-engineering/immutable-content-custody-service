@@ -22,6 +22,27 @@ const write = (root, path, text) => {
 };
 const collect = async iterator => { const all = []; for await (const item of iterator) all.push(item); return all; };
 
+test("explicit source selections retain literal files without admitting unrelated paths", async t => {
+  const { carrier, space } = fixture(t);
+  write(carrier, "selected/Readme.md", "selected bytes");
+  write(carrier, "unselected/private.md", "not requested");
+  const selected = directoryCarrierFiles(carrier, { paths: ["selected/Readme.md"] });
+  const admitted = await admitCarrier(space, selected);
+  const entries = await collect(readCarrierSnapshot(space, admitted.ni));
+  assert.deepEqual(entries.map(entry => entry.path), ["selected/Readme.md"]);
+  assert.equal((await space.get(entries[0].ni)).bytes.toString(), "selected bytes");
+});
+
+test("explicit source selection refuses traversal, redirects, duplicate paths and exceeded budgets", t => {
+  const { carrier } = fixture(t);
+  write(carrier, "selected.md", "bounded source");
+  symlinkSync(join(carrier, "selected.md"), join(carrier, "alias.md"));
+  for (const paths of [[], ["../outside"], ["selected.md", "selected.md"], ["alias.md"], ["."]])
+    assert.throws(() => [...directoryCarrierFiles(carrier, { paths })]);
+  assert.throws(() => [...directoryCarrierFiles(carrier, { paths: ["selected.md"], maximumBytes: 1 })], /byte budget/);
+  assert.throws(() => [...directoryCarrierFiles(carrier, { paths: ["selected.md", "not-read"], maximumPaths: 1 })], /finite/);
+});
+
 test("a directory carrier is admitted as exact bytes plus an addressed reading of its case-preserving paths", async t => {
   const { carrier, space } = fixture(t);
   write(carrier, "README.md", "# L-Space\n");

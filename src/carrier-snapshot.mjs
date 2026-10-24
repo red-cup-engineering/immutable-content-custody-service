@@ -17,7 +17,7 @@
  * file rewrites one part and the small root, not the whole snapshot.
  */
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { makeNiUri } from "@red-cup-engineering/uri-services-section/ni-uri";
 import { extensionType } from "@red-cup-engineering/computer-serialized-content-engineering-services-section/services/http-data-services-section/src/media-type";
@@ -171,10 +171,31 @@ function readWhole(file, size) {
  * are not followed; excluded names are skipped at any depth. Each file offers a
  * cheap stamp (size, mtime, inode) so an admitting host can skip unchanged bytes.
  */
-export function* directoryCarrierFiles(root, { excludes = DEFAULT_CARRIER_EXCLUDES } = {}) {
+export function* directoryCarrierFiles(root, { excludes = DEFAULT_CARRIER_EXCLUDES, paths, maximumPaths = 256, maximumBytes = 16 * 1024 * 1024 } = {}) {
   if (typeof root !== "string" || !root.startsWith("/")) throw new TypeError("carrier: an absolute host-selected directory is required");
   if (!lstatSync(root).isDirectory()) throw new TypeError("carrier: the host-selected carrier is not a directory");
   const skip = new Set(excludes);
+  // Explicit source projections inspect these literal files only. They never
+  // enumerate a directory or cross a symlink into another source authority.
+  if (paths !== undefined) {
+    if (!Array.isArray(paths) || !paths.length || !Number.isSafeInteger(maximumPaths) || maximumPaths < 1 || maximumPaths > 4096 || paths.length > maximumPaths
+      || !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 64 * 1024 * 1024)
+      throw new TypeError("carrier: finite explicit source paths and byte budget required");
+    const selected = paths.map(admitCarrierPath);
+    if (new Set(selected).size !== selected.length) throw new TypeError("carrier: duplicate selected source path");
+    const base = realpathSync(root), files = [];
+    let bytes = 0;
+    for (const path of selected) {
+      if (path.split("/").some(part => skip.has(part))) continue;
+      const file = join(base, path), stat = lstatSync(file);
+      if (!stat.isFile() || realpathSync(file) !== file) throw new TypeError("carrier: selected source is not an unredirected regular file");
+      bytes += stat.size;
+      if (!Number.isSafeInteger(bytes) || bytes > maximumBytes) throw new RangeError("carrier: selected source byte budget exceeded");
+      files.push(Object.freeze({ path, size: stat.size, stamp: `${stat.size}:${stat.mtimeMs}:${stat.ino}`, read: () => readWhole(file, stat.size) }));
+    }
+    yield* files;
+    return;
+  }
   const pending = [""];
   while (pending.length > 0) {
     const relative = pending.pop();

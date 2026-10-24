@@ -460,3 +460,7 @@ An installed host must supply its already authorized durable NI space and an
 independently authenticated principal-bound operation resolver. Presence in a
 source tree or a package manifest is not an installed host admission or a
 network-write grant.
+
+## Bounded source projections
+
+The existing directory carrier accepts explicit literal paths with finite count and total-byte budgets. This branch performs no directory enumeration, preflights every requested regular file before yielding a body reader, and refuses redirects or traversal. It uses the same snapshot, NI and content-defined-part laws as ordinary immutable directory admission.
