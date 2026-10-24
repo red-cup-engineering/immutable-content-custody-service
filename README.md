@@ -19,7 +19,7 @@ const retained = await custody.get(ni);
 ```
 
 Cloudflare R2 wiring belongs to
-`@red-cup-engineering/cloudflare-r2-services-section/immutable-content-custody`.
+`@red-cup-engineering/cloudflare-r2-engineering-services-section/immutable-content-custody`.
 The default maximum remains 8 MiB; larger bounded artifact classes must opt in
 with an explicit positive safe-integer `maximumBytes`.
 
