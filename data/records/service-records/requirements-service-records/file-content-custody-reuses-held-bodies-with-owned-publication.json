@@ -1,0 +1,118 @@
+{
+  "id": "file-content-custody-reuses-held-bodies-with-owned-publication",
+  "name": "Reuse exact held file bodies and finish the original publication lifecycle",
+  "kind": "requirement",
+  "raised-by": "codex",
+  "asks": [
+    "STOP ROUTING AROUND DAMAGE YOU CAUSED AND ABANDONED: it just causes more damage.\nFIX THE DAMAGE",
+    "Then stop ending the task after updating requirements and actually redesign and fix the producers. Start with the cloning and dependency installation paths, carry it through both machines, and don't call more documentation a fix. This is an urgent problem that requires significant action immediately. THis is not about updating requirements, this is about fixing the actively running software on real machines and the cloud.",
+    "This is ridiculous. Not a single part of this codebase actually works how we picture or want. Almost nothing is content addressed, like, nothing uses the same logging or ledgering system. You and other agents have been complaining about the same fucking bugs forever. Like fuck this \"storage-conservation quarantine\"\n\nYOU Made that up, like literally in the last week, as a COPE to avoid the real issue of YOU ARE WRITING CODE THAT LEAKS OUT DATA EVERYWEHRE.\n\nAND YOU, CODEX, yourself, leak everywhere. So Does Claude.\n\nYou need to ACTUALLY FIX THIS SHIT\n\nNot recovery paths, not shims, but go, \"oh my god, I, Sol, left this codebase in a state of permanent broken between multiple migrations and designs. That's ridiculous given the user has shit for design-driven-development and wants correctness-by-construction\"\n\nlike YOU caused ALL the problems you are hitting.\n\nWhat we wanted was for MetroPlat to include the codecs for transmitting semiotic information via NPM-registry conformant protocols and formats.\n\nThat it is even taking you so much discrete effort to fix NPM registry stuff shows how badly the whole stack ismade."
+  ],
+  "derived-from": [
+    "host-storage-reclaims-itself",
+    "house-persistence-uses-native-content-carriers",
+    "561-group/561-group-bare-cedar-fog-services-section#588",
+    "native-programme-source-and-consumer-closure"
+  ],
+  "met-when": [
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:reuse",
+      "target": "held",
+      "says": "The original synchronous file-content custody producer identifies and verifies a stable regular source body and an optional expected content identity before allocating any payload copy. When the exact body is already held, repeated retention, another source read window, another session, or another media presentation creates no new payload staging file, body write, metadata rewrite or competing retained representation. Every successful reference describes actual retained bytes and retained first-writer metadata."
+    },
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:source-integrity",
+      "target": "held",
+      "says": "Raw RFC NI identity remains SHA-256 over exact bytes. Empty bodies, Unicode windows, bounded streaming memory, source replacement and concurrent source change preserve the original source-integrity refusals. expectedNi is an integrity claim checked against the actual current source, not a cache authorization to skip source verification. Corrupt held bytes, nonregular files and symlink sources refuse without overwriting evidence."
+    },
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:publication",
+      "target": "held",
+      "says": "Only previously absent payloads are published. Complete bodies are published exclusively; simultaneous same-identity publishers never replace the first body or metadata, and different bodies or media types are refused preserving the first representation. Canonical first-writer MIME metadata follows the existing original immutable custody owner; a later type is separate typed presentation evidence, never an overwrite."
+    },
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:lifetime",
+      "target": "held",
+      "says": "The original producer owns every new working file from admission through success, failure, cancellation and process interruption. A same-operation continuation reuses or deterministically reconciles its original staged data and never allocates a fresh abandoned replacement. Working ownership must be derived from actual source/product and operation identities, with exact-bound reconciliation that neither deletes unknown or live data nor depends on expiry, manual cleanup, process counting, storage expansion or a second journal. Success retires only its owned staging. Necessary unresolved partial outcomes remain explicitly owned and bounded by the same operation."
+    },
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:consumer",
+      "target": "held",
+      "says": "FeltOS source-authorized development read_source and schema readers keep exact request admission, current source freshness, source-descriptor identity, authorization before and after reading, Unicode offsets and original source-view response shape while receiving this original shared custody product. Repeated windows over unchanged source perform no new payload publication. Source mutation and foreign identity requests still refuse. The normal published dependency and original installed source consumers on Bare Cedar Fog, Windows/WSL, Cold Red Gate and cloud receive the corrected producer; a branch, document, quarantine, standalone shim or caller-only bypass does not discharge it."
+    },
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:evidence",
+      "target": "held",
+      "says": "Requirements, exact source cuts, generated candidates, native request/response receipts, independent assays and operating observations use original content custody and the shared SEAVT logger. Evidence references actual identities and necessary outcomes, does not recursively embed source or dependency trees, does not claim an attempt is acceptance, and does not relabel trial-only model output as production-qualified source."
+    },
+    {
+      "cell": "file-content-custody-reuses-held-bodies-with-owned-publication:byte-store-reuse",
+      "target": "held",
+      "says": "The original createFileStoreSync.putIfAbsent producer and its async wrapper reuse an already retained exact body and exact first-writer metadata before invoking a payload or metadata writer. Ordinary repeated immutable-content custody put creates no UUID temporary, body rewrite, metadata rewrite or replacement publication. Existing new/duplicate/conflicting return shapes, independent first-writer metadata and required strict durability barriers stay true. Absent body or metadata publication remains exclusive under concurrent writers; mismatches preserve first bytes and type and never manufacture missing metadata for another body. The shared original byte-store, streaming file custody and real consumers form one coherent source/release family, rather than caller-specific cache guards or another object store."
+    }
+  ],
+  "owners": [
+    "red-cup-engineering/immutable-content-custody-service",
+    "red-cup-engineering/feltos"
+  ],
+  "x-provenance": {
+    "recorded-by": "Codex /root/immutable_custody_producer; source-projected computer-code-developer duty normalizing-computer-code, no runtime incumbency or governance asserted",
+    "recorded-on": "2026-10-29T14:20:58.282Z",
+    "basis": "Verbatim asks reused unchanged from the original owning Code requirement. Acceptance cells are explicit engineering inferences applying the original P0 requirement to the observed original retainFile producer; they are not quotations or satisfaction claims.",
+    "sourceCut": {
+      "repository": "red-cup-engineering/immutable-content-custody-service",
+      "commit": "8bd919948da480cdd2411283164695052eb26b23",
+      "files": [
+        {
+          "path": "src/file-content-custody.mjs",
+          "sha256": "e84d6b7da3fca9147d2231d471f82de044b93286f096d982645d923125147d1b",
+          "byteLength": 8259
+        },
+        {
+          "path": "src/file-store.mjs",
+          "sha256": "196cdfc49d01a7a7db63b47e59da3720bfccb6d7779694d64e762dc88c7da0b5",
+          "byteLength": 12145
+        },
+        {
+          "path": "src/immutable-content-custody.mjs",
+          "sha256": "bf187c18472e3942d9aae270561f3157418655246ba2e626e3ef811c28cd4802",
+          "byteLength": 8939
+        },
+        {
+          "path": "specifications/strict-file-store.md",
+          "sha256": "29248b685b2adcb982f52de69947a675dd75fa0041feb0989055cc822e0322a7",
+          "byteLength": 4571
+        },
+        {
+          "path": "test/file-content-custody.test.mjs",
+          "sha256": "fef3ede2b3facdf1e379a60be23085538ff62fbf2ca98ee1ff77c00aa4d2609d",
+          "byteLength": 4152
+        },
+        {
+          "path": "package.json",
+          "sha256": "2c040930c901584c6328e2dedbaaa50480f58d2f582119ad67dcb16162b22a5e",
+          "byteLength": 1561
+        }
+      ]
+    },
+    "sourceFindings": [
+      "retainFile creates and streams to .pending-UUID before testing whether the exact immutable target exists.",
+      "An existing target is verified but metadata is then unconditionally rewritten with writeFileSync.",
+      "renameSync on an absent-before-test target is not exclusive publication under simultaneous publishers.",
+      "finally removes owned pending in caught outcomes but cannot run after process interruption, and no deterministic source/operation-owned continuation is represented.",
+      "Original file-store.mjs already enforces first-writer metadata and different-type refusal; reuse this meaning rather than a second immutable contract.",
+      "FeltOS0.21.10 a1a107455d4c32ba708a7ef0ecfa502ea59b0ac6 read_source calls retainFile for every window with expectedNi derived from the captured source cut or prior observation.",
+      "Default createFileStoreSync.putIfAbsent calls selected original File0.4.0 writeFileBytesSync with wx before reading a known existing body; that File writer creates and writes a UUID temporary before exclusive link raises EEXIST. Metadata invokes the same allocate-before-existing-check path. Strict durable put preflights existing representations but default does not."
+    ],
+    "receivingStatus": "Requirement input only; no generated implementation, assay, merge, publication or operating acceptance is asserted.",
+    "revisions": [
+      {
+        "at": "2026-10-29T14:20:58.282Z",
+        "previousRequirement": "ni:///sha-256;64U6C2zdTHg1cEIunFYogeiQbxJOUrXHvHyAmy_0YSY",
+        "previousRaw": "ni:///sha-256;t7penvu-2XKAkMIxzlI23sb9LbhRc9vtCOIUg2F8T5U",
+        "previousSHA256": "b7ba5e9efbbed9728090c231ce5236dec6fd2db85173dbed08e21483617c4f95",
+        "change": "Add seventh original-byte-store duplicate allocation condition; preserve every original six statement, target, and source request unchanged. Previous native Spec/root receiving retained as historical; no adopted model stage existed."
+      }
+    ]
+  }
+}
